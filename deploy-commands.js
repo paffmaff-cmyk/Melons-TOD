@@ -46,6 +46,11 @@ const commands = [
     .setName('bosses')
     .setDescription('List all bosses and their respawn times')
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('todoptions')
+    .setDescription('Add, edit or delete bosses from the list')
+    .toJSON(),
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
