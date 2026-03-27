@@ -55,11 +55,33 @@ function buildOptionsComponents() {
   ];
 }
 
+const { REST, Routes, SlashCommandBuilder } = require('discord.js');
+
+const COMMANDS = [
+  new SlashCommandBuilder()
+    .setName('tod')
+    .setDescription('Record a boss Time of Death and calculate spawn window')
+    .addStringOption(o => o.setName('boss_name').setDescription('Name of the boss that was killed').setRequired(true).setAutocomplete(true))
+    .addBooleanOption(o => o.setName('drop').setDescription('Did the boss drop an item?').setRequired(true))
+    .addStringOption(o => o.setName('who_killed').setDescription('Who killed the boss?').setRequired(false).addChoices({ name: 'Ally ✅', value: 'ally' }, { name: 'Enemy ❌', value: 'enemy' }))
+    .addIntegerOption(o => o.setName('tod_offset').setDescription('Minutes ago the boss was killed (0 = right now)').setRequired(false).setMinValue(0).setMaxValue(1440))
+    .toJSON(),
+  new SlashCommandBuilder().setName('bosses').setDescription('List all bosses and their respawn times').toJSON(),
+  new SlashCommandBuilder().setName('todoptions').setDescription('Add, edit or delete bosses from the list').toJSON(),
+];
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once('clientReady', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers', { type: ActivityType.Watching });
+});
+
+// Register commands instantly when bot joins a new server
+client.on('guildCreate', async guild => {
+  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+  await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: COMMANDS });
+  console.log(`✅ Commands registered for new guild: ${guild.name}`);
 });
 
 client.on('interactionCreate', async interaction => {
