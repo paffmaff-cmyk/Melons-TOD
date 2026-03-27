@@ -51,6 +51,9 @@ const commands = [
     .setName('todoptions')
     .setDescription('Add, edit or delete bosses from the list')
     .toJSON(),
+
+  new SlashCommandBuilder().setName('out').setDescription('Report an absence').toJSON(),
+  new SlashCommandBuilder().setName('absences').setDescription('Show upcoming absences').toJSON(),
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
