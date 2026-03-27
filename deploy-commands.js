@@ -16,17 +16,17 @@ const commands = [
         .setRequired(true)
         .setAutocomplete(true)
     )
-    .addStringOption(option =>
-      option
-        .setName('who_killed')
-        .setDescription('Who killed the boss? (e.g. Self, Ally, Enemy)')
-        .setRequired(false)
-    )
     .addBooleanOption(option =>
       option
         .setName('drop')
         .setDescription('Did the boss drop an item?')
         .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('who_killed')
+        .setDescription('Who killed the boss? (e.g. Self, Ally, Enemy)')
+        .setRequired(false)
     )
     .addIntegerOption(option =>
       option
