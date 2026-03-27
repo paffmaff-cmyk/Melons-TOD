@@ -64,11 +64,13 @@ client.on('interactionCreate', async interaction => {
       ? 'Dropped ✅'
       : 'Did not drop ❌';
 
-    const killedBy = whoKilled.charAt(0).toUpperCase() + whoKilled.slice(1);
+    const killedBy = whoKilled
+      ? whoKilled.charAt(0).toUpperCase() + whoKilled.slice(1)
+      : null;
 
     const embed = new EmbedBuilder()
       .setColor(dropped ? 0x57F287 : 0xED4245)   // green if dropped, red if not
-      .setTitle(`${boss.name} — Killed by ${killedBy}`)
+      .setTitle(killedBy ? `${boss.name} — Killed by ${killedBy}` : boss.name)
       .addFields(
         {
           name: 'Reported by',

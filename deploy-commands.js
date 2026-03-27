@@ -20,7 +20,7 @@ const commands = [
       option
         .setName('who_killed')
         .setDescription('Who killed the boss? (e.g. Self, Ally, Enemy)')
-        .setRequired(true)
+        .setRequired(false)
     )
     .addBooleanOption(option =>
       option
