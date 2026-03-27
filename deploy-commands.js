@@ -25,8 +25,12 @@ const commands = [
     .addStringOption(option =>
       option
         .setName('who_killed')
-        .setDescription('Who killed the boss? (e.g. Self, Ally, Enemy)')
+        .setDescription('Who killed the boss?')
         .setRequired(false)
+        .addChoices(
+          { name: 'Ally ✅', value: 'ally' },
+          { name: 'Enemy ❌', value: 'enemy' },
+        )
     )
     .addIntegerOption(option =>
       option
