@@ -197,7 +197,26 @@ function saveAnnouncements() {
   fs.writeFileSync(ANNOUNCEMENTS_FILE, JSON.stringify(announcements, null, 2));
 }
 
+// Times entered by users are always treated as Europe/Vilnius (Lithuania) time.
+const BOT_TIMEZONE = 'Europe/Vilnius';
+
+// Convert a calendar date/time in BOT_TIMEZONE to a UTC Date object.
+function zonedToUtc(year, month, day, hours, mins, tz) {
+  // Build a naive UTC date using the given numbers, then measure how far off
+  // the target timezone is at that moment, and correct for it.
+  const naive = new Date(Date.UTC(year, month, day, hours, mins));
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', hour12: false,
+  }).formatToParts(naive).reduce((acc, p) => { if (p.type !== 'literal') acc[p.type] = parseInt(p.value); return acc; }, {});
+  const tzH = parts.hour === 24 ? 0 : parts.hour;
+  const tzAsUtc = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, tzH, parts.minute));
+  return new Date(naive.getTime() + (naive.getTime() - tzAsUtc.getTime()));
+}
+
 function parseDateTime(str) {
+  const tz = BOT_TIMEZONE;
   if (!str) return null;
   const s = str.trim();
 
@@ -231,8 +250,12 @@ function parseDateTime(str) {
     day   = parseInt(m2[2]);
   }
 
-  const d = new Date(year, month, day, hours, mins);
-  if (d.getMonth() !== month || d.getDate() !== day) return null;
+  const d = zonedToUtc(year, month, day, hours, mins, tz);
+  // Validate by checking the date in the given timezone
+  const check = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, month: 'numeric', day: 'numeric',
+  }).formatToParts(d).reduce((acc, p) => { if (p.type !== 'literal') acc[p.type] = parseInt(p.value); return acc; }, {});
+  if (check.month - 1 !== month || check.day !== day) return null;
   return d;
 }
 
@@ -458,6 +481,7 @@ client.on('interactionCreate', async interaction => {
         await replyEph(interaction, { embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) });
         return;
       }
+
 
       // ── /gratz ──
       if (interaction.commandName === 'gratz') {
