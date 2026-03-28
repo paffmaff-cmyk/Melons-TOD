@@ -777,7 +777,7 @@ client.on('interactionCreate', async interaction => {
             });
             return;
           }
-          dateDisplay = `${parsedDate.getFullYear()}/${String(parsedDate.getMonth()+1).padStart(2,'0')}/${String(parsedDate.getDate()).padStart(2,'0')} ${String(parsedDate.getHours()).padStart(2,'0')}:${String(parsedDate.getMinutes()).padStart(2,'0')}`;
+          dateDisplay = `<t:${Math.floor(parsedDate.getTime() / 1000)}:F>`;
         }
 
         pendingAnnouncements.delete(interaction.user.id);
