@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   Client, GatewayIntentBits, EmbedBuilder, ActivityType,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder,
   StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
   MessageFlags, REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
@@ -78,6 +78,237 @@ function isAbsenceChannel(interaction) {
   return ABSENCE_CHANNELS.some(kw => name.includes(kw));
 }
 
+// ── Pending announcements (setup state per user) ──────────────
+const pendingAnnouncements = new Map();
+const waitingForImage     = new Map(); // userId → { channelId, setupInteraction }
+// key: userId, value: { showResponses, tagEveryone, roleIds: string[], responsesByRole: bool }
+
+const pendingRetry = new Map();
+// key: userId, value: { text, dateStr } — stored when modal has a date error
+
+function buildAnnounceSetupEmbed(state) {
+  const roles = (state.roleIds ?? []);
+  const embed = new EmbedBuilder()
+    .setColor(0xF1C40F)
+    .setTitle('📢 New Announcement')
+    .setDescription('Toggle options below, then click **✏️ Write Announcement**.')
+    .addFields({ name: 'Tag Roles', value: roles.length ? roles.map(id => `<@&${id}>`).join(' ') : '*None*', inline: true });
+  // attachment:// URLs only work when the file is sent — skip thumbnail in setup preview
+  return embed;
+}
+
+function buildAnnounceSetupComponents(state) {
+  const roleCount = (state.roleIds ?? []).length;
+  const row1 = [];
+
+  // Responses and Role Responses are mutually exclusive:
+  // show Role Responses (if ≥2 roles) right next to Responses; hide Responses when Role Responses is ON
+  if (!state.responsesByRole) {
+    row1.push(
+      new ButtonBuilder()
+        .setCustomId('ann_toggle_responses')
+        .setLabel(`📋 Responses: ${state.showResponses ? 'ON ✅' : 'OFF ❌'}`)
+        .setStyle(state.showResponses ? ButtonStyle.Success : ButtonStyle.Secondary),
+    );
+  }
+  if (roleCount >= 2) {
+    row1.push(
+      new ButtonBuilder()
+        .setCustomId('ann_toggle_role_responses')
+        .setLabel(`🎭 Role Responses: ${state.responsesByRole ? 'ON ✅' : 'OFF ❌'}`)
+        .setStyle(state.responsesByRole ? ButtonStyle.Success : ButtonStyle.Secondary),
+    );
+  }
+  row1.push(
+    new ButtonBuilder()
+      .setCustomId('ann_toggle_everyone')
+      .setLabel(`👥 @everyone: ${state.tagEveryone ? 'ON ✅' : 'OFF ❌'}`)
+      .setStyle(state.tagEveryone ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('ann_roles_screen')
+      .setLabel(roleCount ? `🏷️ Roles (${roleCount})` : '🏷️ Add Roles')
+      .setStyle(roleCount ? ButtonStyle.Primary : ButtonStyle.Secondary),
+  );
+  return [
+    new ActionRowBuilder().addComponents(...row1),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ann_add_image')
+        .setLabel(state.imageUrl ? '🖼️ Image ✅' : '🖼️ Add Image')
+        .setStyle(state.imageUrl ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('ann_continue')
+        .setLabel('✏️ Write Announcement')
+        .setStyle(ButtonStyle.Primary),
+    ),
+  ];
+}
+
+function buildRoleToggleComponents(state, allRoles) {
+  // allRoles = [{id, name}] sorted by position desc, @everyone excluded
+  const selected = new Set(state.roleIds ?? []);
+  const rows = [];
+
+  // Up to 4 rows of 5 toggle buttons (max 20 roles)
+  for (let i = 0; i < Math.min(allRoles.length, 20); i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(
+      ...allRoles.slice(i, i + 5).map(r =>
+        new ButtonBuilder()
+          .setCustomId(`ann_toggle_role|${r.id}`)
+          .setLabel(r.name.slice(0, 80))
+          .setStyle(selected.has(r.id) ? ButtonStyle.Success : ButtonStyle.Danger)
+      )
+    ));
+  }
+
+  // Accept/Back on last row
+  rows.push(new ActionRowBuilder().addComponents(
+    selected.size > 0
+      ? new ButtonBuilder().setCustomId('ann_roles_confirm').setLabel('✅ Accept').setStyle(ButtonStyle.Success)
+      : new ButtonBuilder().setCustomId('ann_roles_back').setLabel('← Back').setStyle(ButtonStyle.Secondary),
+  ));
+
+  return rows;
+}
+
+// ── Ephemeral reply + auto-delete helper ─────────────────────
+function autoDelete(interaction, secs = 300) {
+  setTimeout(async () => {
+    try {
+      await interaction.deleteReply();
+    } catch (_) {
+      // deletion failed — at least clear content and buttons so it's visually gone
+      try { await interaction.editReply({ content: '\u200B', embeds: [], components: [] }); } catch (__) {}
+    }
+  }, secs * 1000);
+}
+async function replyEph(interaction, payload, secs = 300) {
+  await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  autoDelete(interaction, secs);
+}
+
+// ── Announcement data ─────────────────────────────────────────
+const ANNOUNCEMENTS_FILE = path.join(__dirname, 'announcements.json');
+let announcements = fs.existsSync(ANNOUNCEMENTS_FILE)
+  ? JSON.parse(fs.readFileSync(ANNOUNCEMENTS_FILE, 'utf8'))
+  : {};
+
+function saveAnnouncements() {
+  fs.writeFileSync(ANNOUNCEMENTS_FILE, JSON.stringify(announcements, null, 2));
+}
+
+function parseDateTime(str) {
+  if (!str) return null;
+  const s = str.trim();
+
+  // Split off optional time at the end: space + HH:MM or HHMM (24h)
+  const timeMatch = s.match(/^(.*?)\s+(\d{1,2}):?(\d{2})$/);
+  let hours = 0, mins = 0, datePart = s;
+  if (timeMatch) {
+    hours    = parseInt(timeMatch[2]);
+    mins     = parseInt(timeMatch[3]);
+    datePart = timeMatch[1].trim();
+    if (hours > 23 || mins > 59) return null;
+  }
+
+  let year, month, day;
+  const now = new Date();
+
+  // 3-part date: YYYY/MM/DD or YY/MM/DD  (separators / - .)
+  const m3 = datePart.match(/^(\d{2,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
+  if (m3) {
+    let y = parseInt(m3[1]);
+    if (y < 100) y += 2000;   // YY → 20YY
+    year  = y;
+    month = parseInt(m3[2]) - 1;
+    day   = parseInt(m3[3]);
+  } else {
+    // 2-part date: MM/DD  (use current year)
+    const m2 = datePart.match(/^(\d{1,2})[\/\-\.](\d{1,2})$/);
+    if (!m2) return null;
+    year  = now.getFullYear();
+    month = parseInt(m2[1]) - 1;
+    day   = parseInt(m2[2]);
+  }
+
+  const d = new Date(year, month, day, hours, mins);
+  if (d.getMonth() !== month || d.getDate() !== day) return null;
+  return d;
+}
+
+function buildAnnouncementEmbeds(data) {
+  let accepts, denies, unknowns;
+
+  if (data.responsesByRole && data.userRoles) {
+    const buckets = { accept: new Set(), deny: new Set(), unknown: new Set() };
+    for (const [uid, vote] of Object.entries(data.responses)) {
+      for (const rid of (data.userRoles[uid] ?? [])) buckets[vote].add(rid);
+    }
+    accepts  = [...buckets.accept] .map(id => `<@&${id}>`);
+    denies   = [...buckets.deny]   .map(id => `<@&${id}>`);
+    unknowns = [...buckets.unknown].map(id => `<@&${id}>`);
+  } else {
+    accepts  = Object.entries(data.responses).filter(([,v]) => v === 'accept') .map(([uid]) => `<@${uid}>`);
+    denies   = Object.entries(data.responses).filter(([,v]) => v === 'deny')   .map(([uid]) => `<@${uid}>`);
+    unknowns = Object.entries(data.responses).filter(([,v]) => v === 'unknown').map(([uid]) => `<@${uid}>`);
+  }
+
+  const hasDate      = !!data.date;
+  const hasResponses = !!data.showResponses;
+  const hasExtra     = hasDate || hasResponses;
+
+  // Embed 1: title + text + image (image always at bottom of this embed)
+  const embed1 = new EmbedBuilder()
+    .setColor(0xF1C40F)
+    .setTitle('📢 Announcement')
+    .setDescription(data.text);
+  if (data.imageUrl) embed1.setImage(data.imageUrl);
+
+  if (!hasExtra) {
+    embed1.setFooter({ text: `Posted by ${data.authorName}` }).setTimestamp(new Date(data.timestamp));
+    return [embed1];
+  }
+
+  // Embed 2: date + responses (visually appears below the image)
+  const embed2 = new EmbedBuilder()
+    .setColor(0xF1C40F)
+    .setFooter({ text: `Posted by ${data.authorName}` })
+    .setTimestamp(new Date(data.timestamp));
+
+  if (hasDate) {
+    embed2.addFields({ name: '📅 Date & Time', value: data.date, inline: false });
+  }
+  if (hasResponses) {
+    if (hasDate) embed2.addFields({ name: '\u200B', value: '\u200B', inline: false });
+    embed2.addFields(
+      { name: `✅ Accept (${accepts.length})`,      value: accepts.length  ? accepts.join('\n') : '*—*', inline: true },
+      { name: `❌ Deny (${denies.length})`,          value: denies.length   ? denies.join('\n') : '*—*', inline: true },
+      { name: `❓ Don't Know (${unknowns.length})`, value: unknowns.length ? unknowns.join('\n'): '*—*', inline: true },
+    );
+  }
+
+  return [embed1, embed2];
+}
+
+function buildAnnouncementButtons() {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ann_accept') .setLabel('✅ Accept')     .setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ann_deny')   .setLabel('❌ Deny')       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ann_unknown').setLabel("❓ Don't Know") .setStyle(ButtonStyle.Secondary),
+  )];
+}
+
+const EPIC_ITEMS = [
+  { name: 'Queen Ant Ring',      value: 'QUEEN ANT RING'      },
+  { name: 'Core Ring',           value: 'CORE RING'           },
+  { name: 'Orfen Ring',          value: 'ORFEN RING'          },
+  { name: 'Baium Ring',          value: 'BAIUM RING'          },
+  { name: 'Antharas Earring',    value: 'ANTHARAS EARRING'    },
+  { name: 'Valakas Necklace',    value: 'VALAKAS NECKLACE'    },
+  { name: 'Fraya Necklace',      value: 'FRAYA NECKLACE'      },
+  { name: 'Frintezza Necklace',  value: 'FRINTEZZA NECKLACE'  },
+];
+
 // ── Boss options UI ───────────────────────────────────────────
 function buildOptionsEmbed() {
   return new EmbedBuilder()
@@ -118,10 +349,20 @@ const COMMANDS = [
   new SlashCommandBuilder().setName('todoptions').setDescription('Add, edit or delete bosses from the list').toJSON(),
   new SlashCommandBuilder().setName('out').setDescription('Report an absence').toJSON(),
   new SlashCommandBuilder().setName('absences').setDescription('Show upcoming absences').toJSON(),
+
+  new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('gratz')
+    .setDescription('Congratulate a player on an epic drop')
+    .addRoleOption(o => o.setName('player').setDescription('Select the role/player to congratulate').setRequired(true))
+    .addStringOption(o => o.setName('item').setDescription('Epic item').setRequired(true)
+      .addChoices(...EPIC_ITEMS))
+    .toJSON(),
 ];
 
 // ── Bot ───────────────────────────────────────────────────────
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 client.once('clientReady', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
@@ -164,7 +405,7 @@ client.on('interactionCreate', async interaction => {
 
         const boss = findBoss(bossName);
         if (!boss) {
-          await interaction.reply({ content: `❌ Boss **${bossName}** not found. Use \`/bosses\` to see the list.`, flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: `❌ Boss **${bossName}** not found. Use \`/bosses\` to see the list.` });
           return;
         }
 
@@ -210,29 +451,40 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // ── /announce ──
+      if (interaction.commandName === 'announce') {
+        const state = { showResponses: false, tagEveryone: false, roleIds: [], roleNames: {}, responsesByRole: false, imageUrl: null };
+        pendingAnnouncements.set(interaction.user.id, state);
+        await replyEph(interaction, { embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) });
+        return;
+      }
+
+      // ── /gratz ──
+      if (interaction.commandName === 'gratz') {
+        const player = interaction.options.getRole('player');
+        const item   = interaction.options.getString('item');
+        await interaction.reply(`🎉 **GRATZ ${player} WITH ${item}!** 🎉`);
+        return;
+      }
+
       // ── /todoptions ──
       if (interaction.commandName === 'todoptions') {
-        await interaction.reply({
-          embeds: [buildOptionsEmbed()],
-          components: buildOptionsComponents(),
-          flags: MessageFlags.Ephemeral,
-        });
+        await replyEph(interaction, { embeds: [buildOptionsEmbed()], components: buildOptionsComponents() });
         return;
       }
 
       // ── /out ──
       if (interaction.commandName === 'out') {
         if (!isAbsenceChannel(interaction)) {
-          await interaction.reply({ content: '❌ This command can only be used in an absences channel.', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ This command can only be used in an absences channel.' });
           return;
         }
-        await interaction.reply({
+        await replyEph(interaction, {
           embeds: [new EmbedBuilder().setColor(0x5865F2).setTitle('Report Absence').setDescription('Choose absence type:')],
           components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('type_day').setLabel('📅 Day Off').setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId('type_period').setLabel('📆 Period').setStyle(ButtonStyle.Secondary),
           )],
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -240,7 +492,7 @@ client.on('interactionCreate', async interaction => {
       // ── /absences ──
       if (interaction.commandName === 'absences') {
         if (!isAbsenceChannel(interaction)) {
-          await interaction.reply({ content: '❌ This command can only be used in an absences channel.', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ This command can only be used in an absences channel.' });
           return;
         }
         const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -252,7 +504,7 @@ client.on('interactionCreate', async interaction => {
           );
 
         if (upcoming.length === 0) {
-          await interaction.reply({ content: '✅ No upcoming absences.', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '✅ No upcoming absences.' });
           return;
         }
 
@@ -293,6 +545,7 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
+
     // ── Buttons ─────────────────────────────────────────────────
     if (interaction.isButton()) {
       const id = interaction.customId;
@@ -330,6 +583,154 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // Announce setup toggles
+      if (id === 'ann_toggle_responses' || id === 'ann_toggle_everyone' || id === 'ann_toggle_role_responses') {
+        waitingForImage.delete(interaction.user.id);
+        const state = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        if (id === 'ann_toggle_responses')      state.showResponses   = !state.showResponses;
+        if (id === 'ann_toggle_everyone')       state.tagEveryone     = !state.tagEveryone;
+        if (id === 'ann_toggle_role_responses') {
+          state.responsesByRole = !state.responsesByRole;
+          // Role Responses and Responses are mutually exclusive
+          if (state.responsesByRole) state.showResponses = false;
+        }
+        await interaction.update({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) });
+        return;
+      }
+
+      if (id === 'ann_roles_screen') {
+        const state = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        const allRoles = [...interaction.guild.roles.cache.values()]
+          .filter(r => r.id !== interaction.guild.id)
+          .sort((a, b) => b.position - a.position);
+        const roleList = (state.roleIds ?? []).length ? state.roleIds.map(r => `<@&${r}>`).join(' ') : '*None yet*';
+        await interaction.update({
+          embeds: [new EmbedBuilder().setColor(0xF1C40F).setTitle('🏷️ Select Roles').setDescription(`**Selected:** ${roleList}\n\nClick a role to toggle it. Green = added, Red = not added.`)],
+          components: buildRoleToggleComponents(state, allRoles),
+        });
+        return;
+      }
+
+      if (id.startsWith('ann_toggle_role|')) {
+        const roleId = id.split('|')[1];
+        const state  = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        if (state.roleIds.includes(roleId)) {
+          state.roleIds = state.roleIds.filter(r => r !== roleId);
+          delete state.roleNames[roleId];
+        } else {
+          state.roleIds.push(roleId);
+          const role = interaction.guild.roles.cache.get(roleId);
+          if (role) state.roleNames[roleId] = role.name;
+        }
+        const allRoles = [...interaction.guild.roles.cache.values()]
+          .filter(r => r.id !== interaction.guild.id)
+          .sort((a, b) => b.position - a.position);
+        const roleList = state.roleIds.length ? state.roleIds.map(r => `<@&${r}>`).join(' ') : '*None yet*';
+        await interaction.update({
+          embeds: [new EmbedBuilder().setColor(0xF1C40F).setTitle('🏷️ Select Roles').setDescription(`**Selected:** ${roleList}\n\nClick a role to toggle it. Green = added, Red = not added.`)],
+          components: buildRoleToggleComponents(state, allRoles),
+        });
+        return;
+      }
+
+      if (id === 'ann_roles_back' || id === 'ann_roles_confirm') {
+        const state = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        await interaction.update({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) });
+        return;
+      }
+
+      if (id === 'ann_retry') {
+        const retry = pendingRetry.get(interaction.user.id);
+        await interaction.showModal(
+          new ModalBuilder().setCustomId('modal_announce').setTitle('📢 Write Announcement').addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('text').setLabel('Announcement text').setStyle(TextInputStyle.Paragraph).setRequired(true)
+                .setValue(retry?.text ?? ''),
+            ),
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('date').setLabel('Date & Time — optional').setStyle(TextInputStyle.Short).setRequired(false)
+                .setValue(retry?.dateStr ?? '').setPlaceholder('e.g. 04/01  or  26/04/01  or  2026.04.01 2100'),
+            ),
+          )
+        );
+        return;
+      }
+
+      if (id === 'ann_add_image') {
+        const state = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        waitingForImage.set(interaction.user.id, { channelId: interaction.channelId, setupInteraction: interaction });
+        await interaction.update({
+          embeds: [new EmbedBuilder().setColor(0xF1C40F).setTitle('🖼️ Upload Image')
+            .setDescription('**Drop or paste your image in this channel now.**\nThe bot will capture it automatically and return to the setup screen.\n\n*Send any other message or wait 2 minutes to cancel.*')],
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('ann_cancel_image').setLabel('✖ Cancel').setStyle(ButtonStyle.Danger),
+          )],
+        });
+        // Auto-cancel after 2 minutes if no image received
+        setTimeout(() => {
+          if (waitingForImage.has(interaction.user.id)) {
+            waitingForImage.delete(interaction.user.id);
+            interaction.editReply({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) }).catch(() => {});
+          }
+        }, 2 * 60 * 1000);
+        return;
+      }
+
+      if (id === 'ann_cancel_image') {
+        const state = pendingAnnouncements.get(interaction.user.id);
+        waitingForImage.delete(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        await interaction.update({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) });
+        return;
+      }
+
+      if (id === 'ann_continue') {
+        const state = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await interaction.update({ content: '⚠️ Session expired. Please run `/announce` again.', embeds: [], components: [] }); return; }
+        await interaction.showModal(
+          new ModalBuilder().setCustomId('modal_announce').setTitle('📢 Write Announcement').addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('text').setLabel('Announcement text').setStyle(TextInputStyle.Paragraph).setRequired(true),
+            ),
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('date').setLabel('Date & Time — optional').setStyle(TextInputStyle.Short).setRequired(false)
+                .setPlaceholder('e.g. 04/01  or  26/04/01  or  2026.04.01 2100'),
+            ),
+          )
+        );
+        return;
+      }
+
+      // Announcement response buttons
+      if (id === 'ann_accept' || id === 'ann_deny' || id === 'ann_unknown') {
+        const msgId = interaction.message.id;
+        const data  = announcements[msgId];
+        if (!data) { await replyEph(interaction, { content: '❌ Announcement data not found.' }); return; }
+
+        const vote = id === 'ann_accept' ? 'accept' : id === 'ann_deny' ? 'deny' : 'unknown';
+        const uid  = interaction.user.id;
+
+        if (data.responses[uid] === vote) {
+          delete data.responses[uid];
+          if (data.responsesByRole) delete data.userRoles[uid];
+        } else {
+          data.responses[uid] = vote;
+          if (data.responsesByRole) {
+            const memberRoles = new Set(interaction.member.roles.cache.keys());
+            data.userRoles[uid] = (data.roleIds ?? []).filter(rid => memberRoles.has(rid));
+          }
+        }
+
+        saveAnnouncements();
+        await interaction.update({ embeds: buildAnnouncementEmbeds(data), components: buildAnnouncementButtons() });
+        return;
+      }
+
       // Absence buttons
       const today = todayString();
 
@@ -354,18 +755,83 @@ client.on('interactionCreate', async interaction => {
     // ── Modals ──────────────────────────────────────────────────
     if (interaction.isModalSubmit()) {
 
+      // Announce
+      if (interaction.customId === 'modal_announce') {
+        const state = pendingAnnouncements.get(interaction.user.id);
+        if (!state) { await replyEph(interaction, { content: '⚠️ Session expired. Please run `/announce` again.' }); return; }
+
+        const text     = interaction.fields.getTextInputValue('text');
+        const dateStr  = interaction.fields.getTextInputValue('date').trim();
+        const imageUrl = state.imageUrl || null;
+
+        let dateDisplay = null;
+        if (dateStr) {
+          const parsedDate = parseDateTime(dateStr);
+          if (!parsedDate) {
+            pendingRetry.set(interaction.user.id, { text, dateStr, imageUrl });
+            await replyEph(interaction, {
+              content: '❌ Invalid date. Accepted formats (separators `/` `-` `.` all work):\n`MM/DD` · `YY/MM/DD` · `YYYY/MM/DD`\nOptionally add time: `HH:MM` or `HHMM` (24h)\nExamples: `04/01`, `26/04/01`, `2026/04/01`, `2026-04-01 21:00`, `04.01 2100`',
+              components: [new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('ann_retry').setLabel('✏️ Edit Again').setStyle(ButtonStyle.Primary),
+              )],
+            });
+            return;
+          }
+          dateDisplay = `${parsedDate.getFullYear()}/${String(parsedDate.getMonth()+1).padStart(2,'0')}/${String(parsedDate.getDate()).padStart(2,'0')} ${String(parsedDate.getHours()).padStart(2,'0')}:${String(parsedDate.getMinutes()).padStart(2,'0')}`;
+        }
+
+        pendingAnnouncements.delete(interaction.user.id);
+        pendingRetry.delete(interaction.user.id);
+
+        const mentions = state.tagEveryone
+          ? '@everyone'
+          : (state.roleIds ?? []).map(id => `<@&${id}>`).join(' ');
+
+        const data = {
+          text,
+          date: dateDisplay,
+          imageUrl: imageUrl || null,
+          authorName: interaction.member?.displayName || interaction.user.username,
+          showResponses: state.showResponses || state.responsesByRole,
+          responsesByRole: state.responsesByRole ?? false,
+          roleIds: state.roleIds ?? [],
+          mentions: mentions || '',
+          responses: {},
+          userRoles: {},
+          timestamp: new Date().toISOString(),
+        };
+
+        await interaction.deferUpdate();
+
+        const files = state.imageBuffer
+          ? [new AttachmentBuilder(state.imageBuffer, { name: state.imageFileName })]
+          : [];
+        const msg = await interaction.channel.send({
+          content: data.mentions || undefined,
+          embeds: buildAnnouncementEmbeds(data),
+          components: (state.showResponses || state.responsesByRole) ? buildAnnouncementButtons() : [],
+          files,
+        });
+
+        try { await interaction.deleteReply(); } catch (_) {} // already gone if autoDelete fired first
+
+        announcements[msg.id] = data;
+        saveAnnouncements();
+        return;
+      }
+
       // Add boss
       if (interaction.customId === 'modal_add_boss') {
         const name        = interaction.fields.getTextInputValue('boss_name').trim();
         const spawnHours  = parseInt(interaction.fields.getTextInputValue('spawn_hours'));
         const windowHours = parseInt(interaction.fields.getTextInputValue('window_hours'));
         if (isNaN(spawnHours) || isNaN(windowHours)) {
-          await interaction.reply({ content: '❌ Spawn time and window must be numbers.', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ Spawn time and window must be numbers.' });
           return;
         }
         BOSSES.push({ name, spawnHours, windowHours });
         saveBosses();
-        await interaction.reply({ content: `✅ **${name}** added! (${spawnHours}h spawn, ${windowHours}h window)`, flags: MessageFlags.Ephemeral });
+        await replyEph(interaction, { content: `✅ **${name}** added! (${spawnHours}h spawn, ${windowHours}h window)` });
         return;
       }
 
@@ -376,12 +842,12 @@ client.on('interactionCreate', async interaction => {
         const spawnHours  = parseInt(interaction.fields.getTextInputValue('spawn_hours'));
         const windowHours = parseInt(interaction.fields.getTextInputValue('window_hours'));
         if (isNaN(spawnHours) || isNaN(windowHours)) {
-          await interaction.reply({ content: '❌ Spawn time and window must be numbers.', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ Spawn time and window must be numbers.' });
           return;
         }
         const boss = BOSSES.find(b => b.name === oldName);
         if (boss) { boss.name = newName; boss.spawnHours = spawnHours; boss.windowHours = windowHours; saveBosses(); }
-        await interaction.reply({ content: `✅ **${oldName}** updated to **${newName}** (${spawnHours}h spawn, ${windowHours}h window)`, flags: MessageFlags.Ephemeral });
+        await replyEph(interaction, { content: `✅ **${oldName}** updated to **${newName}** (${spawnHours}h spawn, ${windowHours}h window)` });
         return;
       }
 
@@ -392,16 +858,15 @@ client.on('interactionCreate', async interaction => {
         const date    = parseDate(dateStr);
 
         if (!date) {
-          await interaction.reply({ content: '❌ Invalid date. Use MM/DD (e.g. 03/28).', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ Invalid date. Use MM/DD (e.g. 03/28).' });
           return;
         }
         if (isPast(date)) {
-          await interaction.reply({
+          await replyEph(interaction, {
             content: '❌ Date cannot be in the past.',
             components: [new ActionRowBuilder().addComponents(
               new ButtonBuilder().setCustomId('retry_day').setLabel('✏️ Edit Again').setStyle(ButtonStyle.Primary),
             )],
-            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -433,25 +898,24 @@ client.on('interactionCreate', async interaction => {
         const endDate   = parseDate(endStr);
 
         if (!startDate) {
-          await interaction.reply({ content: '❌ Invalid start date. Use MM/DD (e.g. 03/28).', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ Invalid start date. Use MM/DD (e.g. 03/28).' });
           return;
         }
         if (isPast(startDate)) {
-          await interaction.reply({
+          await replyEph(interaction, {
             content: '❌ Start date cannot be in the past.',
             components: [new ActionRowBuilder().addComponents(
               new ButtonBuilder().setCustomId('retry_period').setLabel('✏️ Edit Again').setStyle(ButtonStyle.Primary),
             )],
-            flags: MessageFlags.Ephemeral,
           });
           return;
         }
         if (!endDate) {
-          await interaction.reply({ content: '❌ Invalid end date. Use MM/DD (e.g. 04/05).', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ Invalid end date. Use MM/DD (e.g. 04/05).' });
           return;
         }
         if (endDate < startDate) {
-          await interaction.reply({ content: '❌ End date must be after start date.', flags: MessageFlags.Ephemeral });
+          await replyEph(interaction, { content: '❌ End date must be after start date.' });
           return;
         }
 
@@ -476,13 +940,58 @@ client.on('interactionCreate', async interaction => {
     }
 
   } catch (err) {
+    if (err.code === 10062) return; // interaction expired before bot could respond — nothing to do
+    if (err.code === 50001) {
+      console.error(`Missing Access: bot lacks Send Messages permission in channel ${interaction.channelId}`);
+      try {
+        const msg = { content: '❌ The bot is missing "Send Messages" permission in this channel.', flags: MessageFlags.Ephemeral };
+        if (interaction.replied || interaction.deferred) await interaction.followUp(msg);
+        else { await interaction.reply(msg); autoDelete(interaction); }
+      } catch (_) {}
+      return;
+    }
     console.error('Interaction error:', err);
     try {
-      const msg = { content: '❌ Something went wrong.', flags: MessageFlags.Ephemeral };
-      if (interaction.replied || interaction.deferred) await interaction.followUp(msg);
-      else await interaction.reply(msg);
+      const errPayload = { content: '❌ Something went wrong.', flags: MessageFlags.Ephemeral };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(errPayload);
+      else { await interaction.reply(errPayload); autoDelete(interaction); }
     } catch (_) {}
   }
+});
+
+// ── Image upload listener ──────────────────────────────────────
+client.on('messageCreate', async message => {
+  if (message.author.bot) return;
+  const waiting = waitingForImage.get(message.author.id);
+  if (!waiting) return;
+  if (message.channelId !== waiting.channelId) return;
+
+  const attachment = message.attachments.find(a =>
+    a.contentType?.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(a.name ?? '')
+  );
+  if (!attachment) {
+    // Non-image message cancels the wait
+    waitingForImage.delete(message.author.id);
+    const state = pendingAnnouncements.get(message.author.id);
+    if (state) waiting.setupInteraction.editReply({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) }).catch(() => {});
+    return;
+  }
+
+  waitingForImage.delete(message.author.id);
+  const state = pendingAnnouncements.get(message.author.id);
+  if (!state) return;
+
+  try {
+    const res    = await fetch(attachment.url);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    state.imageBuffer   = buffer;
+    state.imageFileName = attachment.name ?? 'image.png';
+    state.imageUrl      = `attachment://${state.imageFileName}`;
+  } catch (_) {}
+
+  try { await message.delete(); } catch (_) {}
+
+  waiting.setupInteraction.editReply({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) }).catch(() => {});
 });
 
 client.login(process.env.TOKEN);

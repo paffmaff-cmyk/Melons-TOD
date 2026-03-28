@@ -54,6 +54,25 @@ const commands = [
 
   new SlashCommandBuilder().setName('out').setDescription('Report an absence').toJSON(),
   new SlashCommandBuilder().setName('absences').setDescription('Show upcoming absences').toJSON(),
+
+  new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('gratz')
+    .setDescription('Congratulate a player on an epic drop')
+    .addRoleOption(o => o.setName('player').setDescription('Select the role/player to congratulate').setRequired(true))
+    .addStringOption(o => o.setName('item').setDescription('Epic item').setRequired(true)
+      .addChoices(
+        { name: 'Queen Ant Ring',     value: 'QUEEN ANT RING'     },
+        { name: 'Core Ring',          value: 'CORE RING'          },
+        { name: 'Orfen Ring',         value: 'ORFEN RING'         },
+        { name: 'Baium Ring',         value: 'BAIUM RING'         },
+        { name: 'Antharas Earring',   value: 'ANTHARAS EARRING'   },
+        { name: 'Valakas Necklace',   value: 'VALAKAS NECKLACE'   },
+        { name: 'Fraya Necklace',     value: 'FRAYA NECKLACE'     },
+        { name: 'Frintezza Necklace', value: 'FRINTEZZA NECKLACE' },
+      ))
+    .toJSON(),
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
