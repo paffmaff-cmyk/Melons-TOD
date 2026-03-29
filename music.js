@@ -98,6 +98,7 @@ class Session {
     this.connection   = null;
     this.listMessage  = null;  // resolved on first updateListMessage
     this.listChannel  = null;
+    this.radioMessage = null;  // visible now-playing message for radio
     this.playing      = false;
     this._loading      = false; // guard against concurrent _playNext calls
     this._idleTimer    = null;
@@ -131,6 +132,7 @@ class Session {
     this._idleTimer = setTimeout(async () => {
       console.log('[Music] Idle timeout — disconnecting.');
       this._disconnect();
+      await this._deleteRadioMessage();
       sessions.delete(this.guildId);
       delete musicState[this.guildId];
       saveState();
@@ -149,6 +151,13 @@ class Session {
     this.connection?.destroy();
     this.connection = null;
     this.playing    = false;
+  }
+
+  async _deleteRadioMessage() {
+    if (this.radioMessage) {
+      await this.radioMessage.delete().catch(() => {});
+      this.radioMessage = null;
+    }
   }
 
   async _playNext() {
@@ -226,6 +235,7 @@ class Session {
 
   async stopPlayback() {
     this._disconnect();
+    await this._deleteRadioMessage();
     this._startIdleTimer(); // queue wipes after 2 min of inactivity
     this._saveQueueState();
     await this.updateListMessage();
@@ -579,6 +589,13 @@ async function handleStop(interaction) {
 async function handleButton(interaction) {
   const id = interaction.customId;
 
+  if (id === 'radio_stop') {
+    const session = sessions.get(interaction.guildId);
+    if (session) await session.stopPlayback();
+    await interaction.update({ content: '⏹ Radio stopped.', components: [] });
+    return;
+  }
+
   if (id === 'music_stop') {
     const session = sessions.get(interaction.guildId);
     if (!session || !session.playing) {
@@ -682,7 +699,15 @@ async function handleRadio(interaction) {
 
   try {
     await session.startFrom(0, voiceChannel);
-    await interaction.editReply({ content: `📻 Now streaming **${station.name}**` });
+    await interaction.editReply({ content: '✅ Tuning in…', flags: 64 });
+    // Send visible now-playing message with stop button
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('radio_stop').setLabel('⏹ Stop Radio').setStyle(ButtonStyle.Danger)
+    );
+    session.radioMessage = await interaction.channel.send({
+      content: `📻 Now streaming **${station.name}**`,
+      components: [row],
+    });
   } catch (err) {
     sessions.delete(interaction.guildId);
     await interaction.editReply({ content: `❌ ${err.message}` });
@@ -716,6 +741,7 @@ async function handleVoiceStateUpdate(oldState, newState) {
   console.log('[Music] Voice channel empty — disconnecting.');
   session._disconnect();
   session._clearIdleTimer();
+  await session._deleteRadioMessage();
   delete musicState[oldState.guild.id];
   saveState();
   sessions.delete(oldState.guild.id);
