@@ -65,6 +65,16 @@ function addToHistory(guildId, track) {
   saveHistory();
 }
 
+// ── Provider state ────────────────────────────────────────────
+const PROVIDER_FILE = path.join(__dirname, 'music_provider.json');
+let providerState = fs.existsSync(PROVIDER_FILE) ? JSON.parse(fs.readFileSync(PROVIDER_FILE, 'utf8')) : {};
+
+function getProvider(guildId) { return providerState[guildId] ?? 'youtube'; }
+function setProvider(guildId, provider) {
+  providerState[guildId] = provider;
+  fs.writeFileSync(PROVIDER_FILE, JSON.stringify(providerState, null, 2));
+}
+
 // ── Pending searches ──────────────────────────────────────────
 const pendingSearches = new Map(); // userId → { results, expires }
 
@@ -149,7 +159,7 @@ class Session {
     this._saveQueueState();
 
     try {
-      const resource = await createYtDlpResource(track.url);
+      const resource = await createStreamResource(track.url, track.provider ?? 'youtube');
       this._loading = false;
       this.player.play(resource);
       this.playing = true;
@@ -309,6 +319,14 @@ function createYtDlpResource(url) {
   });
 }
 
+async function createStreamResource(url, provider) {
+  if (provider === 'soundcloud') {
+    const stream = await play.stream(url);
+    return createAudioResource(stream.stream, { inputType: stream.type });
+  }
+  return createYtDlpResource(url);
+}
+
 // ── Embed / component builders ────────────────────────────────
 
 function fmt(sec) {
@@ -418,11 +436,17 @@ async function handlePlay(interaction) {
   }
 
   await interaction.deferReply({ flags: 64 });
-  await ensureYtDlp();
+
+  const provider = getProvider(interaction.guildId);
+  if (provider === 'youtube') await ensureYtDlp();
 
   let results;
   try {
-    results = await play.search(query, { limit: 10, source: { youtube: 'video' } });
+    if (provider === 'soundcloud') {
+      results = await play.search(query, { limit: 10, source: { soundcloud: 'tracks' } });
+    } else {
+      results = await play.search(query, { limit: 10, source: { youtube: 'video' } });
+    }
   } catch (err) {
     await interaction.editReply(`❌ Search failed: ${err.message}`);
     autoDelete(interaction);
@@ -435,7 +459,7 @@ async function handlePlay(interaction) {
     return;
   }
 
-  pendingSearches.set(interaction.user.id, { results, expires: Date.now() + 60_000 });
+  pendingSearches.set(interaction.user.id, { results, provider, expires: Date.now() + 60_000 });
 
   await interaction.editReply({
     embeds: [new EmbedBuilder().setColor(0x1db954).setTitle('🔍 Search Results').setDescription('Select a song to add to the queue:')],
@@ -459,14 +483,16 @@ async function handleSearchSelect(interaction) {
   }
 
   const video = pending.results[parseInt(interaction.values[0])];
+  const provider = pending.provider ?? 'youtube';
   pendingSearches.delete(interaction.user.id);
 
   const track = {
-    title:       video.title ?? 'Unknown',
+    title:       video.name ?? video.title ?? 'Unknown',
     url:         video.url ?? `https://www.youtube.com/watch?v=${video.id}`,
-    thumbnail:   video.thumbnails?.[0]?.url ?? null,
+    thumbnail:   video.thumbnail ?? video.thumbnails?.[0]?.url ?? null,
     duration:    video.durationInSec ?? 0,
     requestedBy: interaction.user.id,
+    provider,
   };
 
   await interaction.update({ content: `✅ Added **${track.title}** to the queue.`, embeds: [], components: [] });
@@ -580,6 +606,13 @@ async function handleButton(interaction) {
   }
 }
 
+async function handleProvider(interaction) {
+  const source = interaction.options.getString('source');
+  setProvider(interaction.guildId, source);
+  const label = source === 'soundcloud' ? 'SoundCloud' : 'YouTube';
+  await interaction.reply({ content: `✅ Music source set to **${label}**.`, flags: 64 });
+}
+
 ensureYtDlp().then(() => updateYtDlp()).catch(() => {});
 
-module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect };
+module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider };

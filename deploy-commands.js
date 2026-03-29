@@ -57,10 +57,17 @@ const commands = [
 
   new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
 
-  new SlashCommandBuilder().setName('play').setDescription('Search YouTube and add a song to the queue')
-    .addStringOption(o => o.setName('query').setDescription('Song name or YouTube URL').setRequired(true))
+  new SlashCommandBuilder().setName('play').setDescription('Search and add a song to the queue')
+    .addStringOption(o => o.setName('query').setDescription('Song name or URL').setRequired(true))
     .toJSON(),
   new SlashCommandBuilder().setName('stop').setDescription('Stop music and disconnect from voice').toJSON(),
+  new SlashCommandBuilder().setName('provider').setDescription('Set the music provider for this server')
+    .addStringOption(o => o.setName('source').setDescription('Music provider').setRequired(true)
+      .addChoices(
+        { name: 'YouTube', value: 'youtube' },
+        { name: 'SoundCloud', value: 'soundcloud' },
+      ))
+    .toJSON(),
 
   new SlashCommandBuilder()
     .setName('gratz')
