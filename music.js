@@ -272,7 +272,7 @@ function createYtDlpResource(url) {
   return new Promise((resolve, reject) => {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
     const configFile  = path.join(__dirname, 'yt-dlp.conf');
-    const ytdlpArgs = ['-f', 'bestaudio/best', '--no-playlist', '-o', '-', '--quiet', '--js-runtimes', 'node'];
+    const ytdlpArgs = ['-f', 'bestaudio/best', '--no-playlist', '-o', '-', '--quiet', '--js-runtimes', 'deno:node'];
     if (fs.existsSync(configFile))  ytdlpArgs.unshift('--config-location', configFile);
     if (fs.existsSync(cookiesFile)) ytdlpArgs.push('--cookies', cookiesFile);
     ytdlpArgs.push(url);
