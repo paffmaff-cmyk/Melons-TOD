@@ -273,11 +273,11 @@ function createYtDlpResource(url) {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
     // Use iOS player client — bypasses YouTube bot detection without cookies/Deno
     const ytdlpArgs = [
-      '-f', 'bestaudio/best',
+      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
       '--no-playlist',
       '-o', '-',
       '--quiet',
-      '--extractor-args', 'youtube:player_client=ios',
+      '--extractor-args', 'youtube:player_client=ios,mweb',
     ];
     if (fs.existsSync(cookiesFile)) ytdlpArgs.push('--cookies', cookiesFile);
     ytdlpArgs.push(url);
