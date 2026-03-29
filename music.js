@@ -403,7 +403,7 @@ function buildSearchComponents(results) {
       .setCustomId('music_search_select')
       .setPlaceholder('Choose a song…')
       .addOptions(results.map((v, i) => ({
-        label:       `${v.title?.slice(0, 90) ?? 'Unknown'}`,
+        label:       `${(v.name ?? v.title)?.slice(0, 90) ?? 'Unknown'}`,
         description: `${fmt(v.durationInSec ?? 0)} — ${v.channel?.name?.slice(0, 40) ?? ''}`,
         value:       String(i),
       })))
