@@ -4,7 +4,10 @@ const {
 } = require('@discordjs/voice');
 const play      = require('play-dl');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
-const ffmpegPath = require('ffmpeg-static');
+const { execSync } = require('child_process');
+let ffmpegPath;
+try { execSync('ffmpeg -version', { stdio: 'ignore' }); ffmpegPath = 'ffmpeg'; }
+catch { ffmpegPath = require('ffmpeg-static'); }
 const { spawn } = require('child_process');
 const https     = require('https');
 const fs        = require('fs');
