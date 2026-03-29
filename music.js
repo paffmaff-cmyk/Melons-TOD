@@ -281,7 +281,6 @@ function createYtDlpResource(url) {
       '--js-runtimes', 'deno:node',
     ];
     if (fs.existsSync(cookiesFile)) ytdlpArgs.push('--cookies', cookiesFile);
-    ytdlpArgs.push('--username', 'oauth2', '--password', '');
     ytdlpArgs.push(url);
     // Ensure Deno is in PATH when spawned from Node (not inherited by default)
     const spawnEnv = {
