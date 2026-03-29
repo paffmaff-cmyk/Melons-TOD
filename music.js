@@ -615,4 +615,6 @@ async function handleProvider(interaction) {
 
 ensureYtDlp().then(() => updateYtDlp()).catch(() => {});
 
+play.getFreeClientID().then(id => play.setToken({ soundcloud: { client_id: id } })).catch(() => {});
+
 module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider };
