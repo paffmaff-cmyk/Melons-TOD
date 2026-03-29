@@ -344,7 +344,8 @@ function createRadioResource(url) {
       '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
       '-i', url,
       '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1',
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ffmpeg.stderr.on('data', d => console.error('[Radio ffmpeg]', d.toString().trim()));
     ffmpeg.stdout.once('readable', () => {
       resolve(createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
     });
