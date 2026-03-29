@@ -1,17 +1,17 @@
 [
   {
     "name": "Queen Ant",
-    "spawnHours": 18,
+    "spawnHours": 17,
     "windowHours": 4
   },
   {
     "name": "Core",
-    "spawnHours": 27,
+    "spawnHours": 48,
     "windowHours": 4
   },
   {
     "name": "Orfen",
-    "spawnHours": 20,
+    "spawnHours": 33,
     "windowHours": 4
   },
   {
@@ -21,18 +21,23 @@
   },
   {
     "name": "Baium",
-    "spawnHours": 120,
-    "windowHours": 8
+    "spawnHours": 125,
+    "windowHours": 4
   },
   {
     "name": "Antharas",
-    "spawnHours": 192,
-    "windowHours": 8
+    "spawnHours": 342,
+    "windowHours": 4
   },
   {
     "name": "Valakas",
-    "spawnHours": 264,
-    "windowHours": 8
+    "spawnHours": 342,
+    "windowHours": 4
+  },
+  {
+    "name": "Beleth",
+    "spawnHours": 342,
+    "windowHours": 4
   },
   {
     "name": "Frintezza",

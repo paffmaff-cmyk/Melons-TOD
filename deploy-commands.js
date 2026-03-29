@@ -76,6 +76,7 @@ const commands = [
         { name: 'Valakas Necklace',   value: 'VALAKAS NECKLACE'   },
         { name: 'Fraya Necklace',     value: 'FRAYA NECKLACE'     },
         { name: 'Frintezza Necklace', value: 'FRINTEZZA NECKLACE' },
+        { name: 'Beleth Ring',        value: 'BELETH RING'        },
       ))
     .toJSON(),
 ];
