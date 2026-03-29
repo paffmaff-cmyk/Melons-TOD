@@ -1,6 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const music = require('./music');
 const {
   Client, GatewayIntentBits, EmbedBuilder, ActivityType,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder,
@@ -375,6 +376,11 @@ const COMMANDS = [
 
   new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
 
+  new SlashCommandBuilder().setName('play').setDescription('Search YouTube and add a song to the queue')
+    .addStringOption(o => o.setName('query').setDescription('Song name or YouTube URL').setRequired(true))
+    .toJSON(),
+  new SlashCommandBuilder().setName('stop').setDescription('Stop music and disconnect from voice').toJSON(),
+
   new SlashCommandBuilder()
     .setName('gratz')
     .setDescription('Congratulate a player on an epic drop')
@@ -385,7 +391,7 @@ const COMMANDS = [
 ];
 
 // ── Bot ───────────────────────────────────────────────────────
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
 
 client.once('clientReady', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
@@ -412,7 +418,7 @@ client.on('interactionCreate', async interaction => {
         .filter(b => b.name.toLowerCase().includes(focused))
         .slice(0, 25)
         .map(b => ({ name: b.name, value: b.name }));
-      await interaction.respond(choices);
+      await interaction.respond(choices).catch(() => {});
       return;
     }
 
@@ -473,6 +479,12 @@ client.on('interactionCreate', async interaction => {
         });
         return;
       }
+
+      // ── /play ──
+      if (interaction.commandName === 'play') { await music.handlePlay(interaction); return; }
+
+      // ── /stop ──
+      if (interaction.commandName === 'stop') { await music.handleStop(interaction); return; }
 
       // ── /announce ──
       if (interaction.commandName === 'announce') {
@@ -552,6 +564,10 @@ client.on('interactionCreate', async interaction => {
     }
 
     // ── Select menu ─────────────────────────────────────────────
+    if (interaction.isStringSelectMenu() && interaction.customId === 'music_search_select') {
+      await music.handleSearchSelect(interaction); return;
+    }
+
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_boss_edit') {
       const boss = findBoss(interaction.values[0]);
       await interaction.update({
@@ -573,6 +589,9 @@ client.on('interactionCreate', async interaction => {
     // ── Buttons ─────────────────────────────────────────────────
     if (interaction.isButton()) {
       const id = interaction.customId;
+
+      // Music buttons
+      if (id.startsWith('music_')) { await music.handleButton(interaction); return; }
 
       // Boss options
       if (id === 'back_to_options') {

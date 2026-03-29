@@ -57,6 +57,11 @@ const commands = [
 
   new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
 
+  new SlashCommandBuilder().setName('play').setDescription('Search YouTube and add a song to the queue')
+    .addStringOption(o => o.setName('query').setDescription('Song name or YouTube URL').setRequired(true))
+    .toJSON(),
+  new SlashCommandBuilder().setName('stop').setDescription('Stop music and disconnect from voice').toJSON(),
+
   new SlashCommandBuilder()
     .setName('gratz')
     .setDescription('Congratulate a player on an epic drop')
@@ -81,7 +86,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
   try {
     console.log('Registering slash commands...');
     await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
+      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
       { body: commands },
     );
     console.log('✅ Slash commands registered successfully!');
