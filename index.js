@@ -380,6 +380,9 @@ const COMMANDS = [
     .addStringOption(o => o.setName('query').setDescription('Song name or URL').setRequired(true))
     .toJSON(),
   new SlashCommandBuilder().setName('stop').setDescription('Stop music and disconnect from voice').toJSON(),
+  new SlashCommandBuilder().setName('radio').setDescription('Play a live radio station')
+    .addStringOption(o => o.setName('station').setDescription('Radio station name').setRequired(true).setAutocomplete(true))
+    .toJSON(),
   new SlashCommandBuilder().setName('provider').setDescription('Set the music provider for this server')
     .addStringOption(o => o.setName('source').setDescription('Music provider').setRequired(true)
       .addChoices(
@@ -420,6 +423,7 @@ client.on('interactionCreate', async interaction => {
 
     // ── Autocomplete ────────────────────────────────────────────
     if (interaction.isAutocomplete()) {
+      if (interaction.commandName === 'radio') { await music.handleRadio(interaction); return; }
       const focused = interaction.options.getFocused().toLowerCase();
       const choices = BOSSES
         .filter(b => b.name.toLowerCase().includes(focused))
@@ -492,6 +496,9 @@ client.on('interactionCreate', async interaction => {
 
       // ── /stop ──
       if (interaction.commandName === 'stop') { await music.handleStop(interaction); return; }
+
+      // ── /radio ──
+      if (interaction.commandName === 'radio') { await music.handleRadio(interaction); return; }
 
       // ── /provider ──
       if (interaction.commandName === 'provider') { await music.handleProvider(interaction); return; }

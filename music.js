@@ -65,6 +65,10 @@ function addToHistory(guildId, track) {
   saveHistory();
 }
 
+// ── Radio stations ────────────────────────────────────────────
+const RADIO_FILE = path.join(__dirname, 'radio_stations.json');
+let radioStations = fs.existsSync(RADIO_FILE) ? JSON.parse(fs.readFileSync(RADIO_FILE, 'utf8')) : [];
+
 // ── Provider state ────────────────────────────────────────────
 const PROVIDER_FILE = path.join(__dirname, 'music_provider.json');
 let providerState = fs.existsSync(PROVIDER_FILE) ? JSON.parse(fs.readFileSync(PROVIDER_FILE, 'utf8')) : {};
@@ -100,7 +104,9 @@ class Session {
     );
 
     this.player.on(AudioPlayerStatus.Idle, () => {
-      if (this._loading) return; // jump in progress — ignore this Idle event
+      if (this._loading) return;
+      const current = this.queue[this.currentIndex];
+      if (current?.isRadio) { setTimeout(() => this._playNext(), 3000); return; }
       this.currentIndex++;
       this._playNext();
     });
@@ -108,6 +114,8 @@ class Session {
     this.player.on('error', err => {
       console.error('[Music] Player error:', err.message);
       if (this._loading) return;
+      const current = this.queue[this.currentIndex];
+      if (current?.isRadio) { setTimeout(() => this._playNext(), 3000); return; }
       this.currentIndex++;
       this._playNext();
     });
@@ -159,7 +167,9 @@ class Session {
     this._saveQueueState();
 
     try {
-      const resource = await createStreamResource(track.url, track.provider ?? 'youtube');
+      const resource = track.isRadio
+        ? await createRadioResource(track.url)
+        : await createStreamResource(track.url, track.provider ?? 'youtube');
       this._loading = false;
       this.player.play(resource);
       this.playing = true;
@@ -325,6 +335,22 @@ async function createStreamResource(url, provider) {
     return createAudioResource(stream.stream, { inputType: stream.type });
   }
   return createYtDlpResource(url);
+}
+
+function createRadioResource(url) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn(ffmpegPath, [
+      '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+      '-i', url,
+      '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    ffmpeg.stdout.once('readable', () => {
+      resolve(createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
+    });
+    ffmpeg.on('error', reject);
+    ffmpeg.stdout.on('error', () => {});
+    ffmpeg.on('close', code => { if (code !== 0) reject(new Error(`ffmpeg exited with code ${code}`)); });
+  });
 }
 
 // ── Embed / component builders ────────────────────────────────
@@ -606,6 +632,48 @@ async function handleButton(interaction) {
   }
 }
 
+async function handleRadio(interaction) {
+  if (interaction.isAutocomplete()) {
+    const focused = interaction.options.getFocused().toLowerCase();
+    const choices = radioStations
+      .filter(s => s.name.toLowerCase().includes(focused))
+      .slice(0, 25)
+      .map(s => ({ name: s.name, value: s.name }));
+    await interaction.respond(choices).catch(() => {});
+    return;
+  }
+
+  const stationName = interaction.options.getString('station');
+  const station     = radioStations.find(s => s.name.toLowerCase() === stationName.toLowerCase());
+  if (!station) {
+    await interaction.reply({ content: `❌ Station **${stationName}** not found.`, flags: 64 });
+    return;
+  }
+
+  const voiceChannel = interaction.member.voice?.channel;
+  if (!voiceChannel) {
+    await interaction.reply({ content: '❌ Join a voice channel first.', flags: 64 });
+    return;
+  }
+
+  await interaction.deferReply({ flags: 64 });
+
+  const { session } = getOrCreateSession(interaction.guildId);
+  await session.resolveListMessage(interaction.guild);
+
+  // Replace queue with just the radio track
+  session.queue        = [{ title: `📻 ${station.name}`, url: station.url, isRadio: true, thumbnail: null, duration: 0, requestedBy: interaction.user.id }];
+  session.currentIndex = 0;
+
+  try {
+    await session.startFrom(0, voiceChannel);
+    await interaction.editReply({ content: `📻 Now streaming **${station.name}**` });
+  } catch (err) {
+    sessions.delete(interaction.guildId);
+    await interaction.editReply({ content: `❌ ${err.message}` });
+  }
+}
+
 async function handleProvider(interaction) {
   const source = interaction.options.getString('source');
   setProvider(interaction.guildId, source);
@@ -617,4 +685,4 @@ ensureYtDlp().then(() => updateYtDlp()).catch(() => {});
 
 play.getFreeClientID().then(id => play.setToken({ soundcloud: { client_id: id } })).catch(() => {});
 
-module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider };
+module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider, handleRadio };
