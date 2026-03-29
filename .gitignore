@@ -1,3 +1,10 @@
 # Never commit these to git/GitHub!
 .env
 node_modules/
+
+# Runtime-modified files — managed directly on server
+bosses.json
+absences.json
+music_state.json
+music_history.json
+music_provider.json
