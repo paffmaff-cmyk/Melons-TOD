@@ -11,8 +11,11 @@ const {
 
 // ── Boss data ─────────────────────────────────────────────────
 const BOSSES_FILE = path.join(__dirname, 'bosses.json');
-if (!fs.existsSync(BOSSES_FILE)) fs.copyFileSync(path.join(__dirname, 'bosses.default.json'), BOSSES_FILE);
-let BOSSES = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8'));
+const BOSSES_DEFAULT = path.join(__dirname, 'bosses.default.json');
+if (!fs.existsSync(BOSSES_FILE)) fs.copyFileSync(BOSSES_DEFAULT, BOSSES_FILE);
+let BOSSES;
+try { BOSSES = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8')); }
+catch { console.error('[Bot] bosses.json corrupted — restoring from default'); fs.copyFileSync(BOSSES_DEFAULT, BOSSES_FILE); BOSSES = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8')); }
 
 function saveBosses() {
   fs.writeFileSync(BOSSES_FILE, JSON.stringify(BOSSES, null, 2));

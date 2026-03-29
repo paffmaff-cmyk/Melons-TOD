@@ -2,7 +2,7 @@
 .env
 node_modules/
 
-# Runtime data — modified by the bot automatically, never overwritten by git
+# Runtime data — modified by the bot/users, never overwritten by git pull
 bosses.json
 absences.json
 music_state.json
