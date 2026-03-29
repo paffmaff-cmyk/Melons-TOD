@@ -77,11 +77,7 @@ let radioStations = JSON.parse(fs.readFileSync(RADIO_FILE, 'utf8'));
 const PROVIDER_FILE = path.join(__dirname, 'music_provider.json');
 let providerState = fs.existsSync(PROVIDER_FILE) ? JSON.parse(fs.readFileSync(PROVIDER_FILE, 'utf8')) : {};
 
-function getProvider(guildId) { return providerState[guildId] ?? 'youtube'; }
-function setProvider(guildId, provider) {
-  providerState[guildId] = provider;
-  fs.writeFileSync(PROVIDER_FILE, JSON.stringify(providerState, null, 2));
-}
+function getProvider(guildId) { return 'soundcloud'; }
 
 // ── Pending searches ──────────────────────────────────────────
 const pendingSearches = new Map(); // userId → { results, expires }
@@ -476,8 +472,16 @@ function getOrCreateSession(guildId) {
 
 // ── Public API ────────────────────────────────────────────────
 
+async function resolveSpotifyQuery(spotifyUrl) {
+  const res  = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`);
+  if (!res.ok) throw new Error(`Spotify oEmbed returned ${res.status}`);
+  const data = await res.json();
+  // title is "Track Name" — strip trailing " - on Spotify" suffix if present
+  return data.title?.replace(/ - on Spotify$/i, '').trim() ?? null;
+}
+
 async function handlePlay(interaction) {
-  const query      = interaction.options.getString('query');
+  let query        = interaction.options.getString('query');
   const voiceState = interaction.member.voice;
 
   if (!voiceState?.channel) {
@@ -488,16 +492,24 @@ async function handlePlay(interaction) {
 
   await interaction.deferReply({ flags: 64 });
 
+  // Resolve Spotify links → track title for SoundCloud search
+  if (query.includes('spotify.com')) {
+    try {
+      const resolved = await resolveSpotifyQuery(query);
+      if (!resolved) throw new Error('Could not read track title');
+      query = resolved;
+    } catch (err) {
+      await interaction.editReply(`❌ Could not resolve Spotify link: ${err.message}. Try pasting the song name directly.`);
+      autoDelete(interaction);
+      return;
+    }
+  }
+
   const provider = getProvider(interaction.guildId);
-  if (provider === 'youtube') await ensureYtDlp();
 
   let results;
   try {
-    if (provider === 'soundcloud') {
-      results = await play.search(query, { limit: 10, source: { soundcloud: 'tracks' } });
-    } else {
-      results = await play.search(query, { limit: 10, source: { youtube: 'video' } });
-    }
+    results = await play.search(query, { limit: 10, source: { soundcloud: 'tracks' } });
   } catch (err) {
     await interaction.editReply(`❌ Search failed: ${err.message}`);
     autoDelete(interaction);
@@ -715,12 +727,6 @@ async function handleRadio(interaction) {
   }
 }
 
-async function handleProvider(interaction) {
-  const source = interaction.options.getString('source');
-  setProvider(interaction.guildId, source);
-  const label = source === 'soundcloud' ? 'SoundCloud' : 'YouTube';
-  await interaction.reply({ content: `✅ Music source set to **${label}**.`, flags: 64 });
-}
 
 async function handleVoiceStateUpdate(oldState, newState) {
   // Only care about users leaving a channel
@@ -753,4 +759,4 @@ ensureYtDlp().then(() => updateYtDlp()).catch(() => {});
 
 play.getFreeClientID().then(id => play.setToken({ soundcloud: { client_id: id } })).catch(() => {});
 
-module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider, handleRadio, handleVoiceStateUpdate };
+module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleRadio, handleVoiceStateUpdate };

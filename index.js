@@ -504,8 +504,6 @@ client.on('interactionCreate', async interaction => {
       // ── /radio ──
       if (interaction.commandName === 'radio') { await music.handleRadio(interaction); return; }
 
-      // ── /provider ──
-      if (interaction.commandName === 'provider') { await music.handleProvider(interaction); return; }
 
       // ── /announce ──
       if (interaction.commandName === 'announce') {
