@@ -4,5 +4,6 @@
   { "name": "LRT Opus",        "url": "https://stream.lrt.lt/lrt_opus_128" },
   { "name": "Zip FM",          "url": "https://stream.zipfm.lt/zipfm128.mp3" },
   { "name": "Lofi Hip Hop",    "url": "http://ice1.somafm.com/groovesalad-128-mp3" },
-  { "name": "Chill Beats",     "url": "http://ice1.somafm.com/lush-128-mp3" }
+  { "name": "Chill Beats",     "url": "http://ice1.somafm.com/lush-128-mp3" },
+  { "name": "Radio Centras",   "url": "http://stream.radiocentras.lt/rc_128.mp3" }
 ]
