@@ -563,6 +563,8 @@ async function handleSearchSelect(interaction) {
 
   const { session, isNew } = getOrCreateSession(interaction.guildId);
   await session.resolveListMessage(interaction.guild);
+  // Always use the channel where the command was issued
+  if (!session.listChannel) session.listChannel = interaction.channel;
 
   if (isNew) {
     // Bot had left voice — start a brand new playlist with only this song
