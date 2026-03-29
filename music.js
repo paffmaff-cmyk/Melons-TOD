@@ -271,9 +271,14 @@ class Session {
 function createYtDlpResource(url) {
   return new Promise((resolve, reject) => {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
-    const configFile  = path.join(__dirname, 'yt-dlp.conf');
-    const ytdlpArgs = ['-f', 'bestaudio/best', '--no-playlist', '-o', '-', '--quiet', '--js-runtimes', 'deno:node'];
-    if (fs.existsSync(configFile))  ytdlpArgs.unshift('--config-location', configFile);
+    // Use iOS player client — bypasses YouTube bot detection without cookies/Deno
+    const ytdlpArgs = [
+      '-f', 'bestaudio/best',
+      '--no-playlist',
+      '-o', '-',
+      '--quiet',
+      '--extractor-args', 'youtube:player_client=ios',
+    ];
     if (fs.existsSync(cookiesFile)) ytdlpArgs.push('--cookies', cookiesFile);
     ytdlpArgs.push(url);
     const ytdlp = spawn(YTDLP_PATH, ytdlpArgs);
