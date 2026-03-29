@@ -612,7 +612,7 @@ client.on('interactionCreate', async interaction => {
       const id = interaction.customId;
 
       // Music buttons
-      if (id.startsWith('music_')) { await music.handleButton(interaction); return; }
+      if (id.startsWith('music_') || id === 'radio_stop') { await music.handleButton(interaction); return; }
 
       // Boss options
       if (id === 'back_to_options') {

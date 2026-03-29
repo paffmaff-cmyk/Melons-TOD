@@ -1,7 +1,6 @@
 [
   { "name": "Power Hit Radio", "url": "https://stream.rcs.revma.com/f31w7e0fveuvv" },
   { "name": "M-1",             "url": "https://stream.m-1.fm/m1/mp3" },
-  { "name": "LRT Opus",        "url": "https://radijas.lrt.lt/opus/master.m3u8" },
   { "name": "Zip FM",          "url": "https://stream2.zipfm.lt/zipfm128.mp3" },
   { "name": "Lofi Hip Hop",    "url": "https://ice4.somafm.com/groovesalad-128-mp3" },
   { "name": "Chill Beats",     "url": "https://ice4.somafm.com/lush-128-mp3" },
