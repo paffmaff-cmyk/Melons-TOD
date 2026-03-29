@@ -13,9 +13,6 @@ const BOSSES = [
   { name: 'Antharas',    spawnHours: 342, windowHours: 4 },
   { name: 'Valakas',     spawnHours: 342, windowHours: 4 },
   { name: 'Beleth',      spawnHours: 342, windowHours: 4 },
-  { name: 'Frintezza',   spawnHours: 48,  windowHours: 4 },
-  { name: 'Sailren',     spawnHours: 36,  windowHours: 4 },
-  { name: 'Tyrannosaurus', spawnHours: 18, windowHours: 4 },
   // Add more bosses here in the same format
 ];
 

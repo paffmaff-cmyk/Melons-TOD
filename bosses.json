@@ -39,19 +39,4 @@
     "spawnHours": 342,
     "windowHours": 4
   },
-  {
-    "name": "Frintezza",
-    "spawnHours": 48,
-    "windowHours": 4
-  },
-  {
-    "name": "Sailren",
-    "spawnHours": 36,
-    "windowHours": 4
-  },
-  {
-    "name": "Tyrannosaurus",
-    "spawnHours": 18,
-    "windowHours": 4
-  }
 ]
