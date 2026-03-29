@@ -591,8 +591,9 @@ async function handleButton(interaction) {
 
   if (id === 'radio_stop') {
     const session = sessions.get(interaction.guildId);
-    if (session) await session.stopPlayback();
+    if (session) session.radioMessage = null; // prevent _deleteRadioMessage from deleting this message
     await interaction.update({ content: '⏹ Radio stopped.', components: [] });
+    if (session) await session.stopPlayback();
     return;
   }
 
