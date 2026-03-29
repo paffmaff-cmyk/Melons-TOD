@@ -15,11 +15,6 @@
     "windowHours": 4
   },
   {
-    "name": "Zaken",
-    "spawnHours": 60,
-    "windowHours": 8
-  },
-  {
     "name": "Baium",
     "spawnHours": 125,
     "windowHours": 4
