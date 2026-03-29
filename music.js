@@ -271,17 +271,23 @@ class Session {
 function createYtDlpResource(url) {
   return new Promise((resolve, reject) => {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
-    // Try multiple player clients to bypass bot detection; bestaudio* accepts muxed fallback
+    // Multiple player clients + Deno JS runtime for JS challenge solving
     const ytdlpArgs = [
       '-f', 'bestaudio*/best',
       '--no-playlist',
       '-o', '-',
       '--quiet',
-      '--extractor-args', 'youtube:player_client=ios,android,mweb',
+      '--extractor-args', 'youtube:player_client=ios,android',
+      '--js-runtimes', 'deno:node',
     ];
     if (fs.existsSync(cookiesFile)) ytdlpArgs.push('--cookies', cookiesFile);
     ytdlpArgs.push(url);
-    const ytdlp = spawn(YTDLP_PATH, ytdlpArgs);
+    // Ensure Deno is in PATH when spawned from Node (not inherited by default)
+    const spawnEnv = {
+      ...process.env,
+      PATH: `${process.env.PATH}:/root/.deno/bin:/root/.local/bin`,
+    };
+    const ytdlp = spawn(YTDLP_PATH, ytdlpArgs, { env: spawnEnv });
     const ffmpeg = spawn(ffmpegPath, [
       '-i', 'pipe:0', '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1',
     ], { stdio: ['pipe', 'pipe', 'ignore'] });
