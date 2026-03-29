@@ -67,7 +67,8 @@ function addToHistory(guildId, track) {
 
 // ── Radio stations ────────────────────────────────────────────
 const RADIO_FILE = path.join(__dirname, 'radio_stations.json');
-let radioStations = fs.existsSync(RADIO_FILE) ? JSON.parse(fs.readFileSync(RADIO_FILE, 'utf8')) : [];
+if (!fs.existsSync(RADIO_FILE)) fs.copyFileSync(path.join(__dirname, 'radio_stations.default.json'), RADIO_FILE);
+let radioStations = JSON.parse(fs.readFileSync(RADIO_FILE, 'utf8'));
 
 // ── Provider state ────────────────────────────────────────────
 const PROVIDER_FILE = path.join(__dirname, 'music_provider.json');

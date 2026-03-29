@@ -11,6 +11,7 @@ const {
 
 // ── Boss data ─────────────────────────────────────────────────
 const BOSSES_FILE = path.join(__dirname, 'bosses.json');
+if (!fs.existsSync(BOSSES_FILE)) fs.copyFileSync(path.join(__dirname, 'bosses.default.json'), BOSSES_FILE);
 let BOSSES = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8'));
 
 function saveBosses() {
