@@ -1058,4 +1058,9 @@ client.on('messageCreate', async message => {
   waiting.setupInteraction.editReply({ embeds: [buildAnnounceSetupEmbed(state)], components: buildAnnounceSetupComponents(state) }).catch(() => {});
 });
 
+// ── Auto-leave when voice channel empties ─────────────────────
+client.on('voiceStateUpdate', (oldState, newState) => {
+  music.handleVoiceStateUpdate(oldState, newState).catch(() => {});
+});
+
 client.login(process.env.TOKEN);

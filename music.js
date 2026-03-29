@@ -343,18 +343,28 @@ async function createStreamResource(url, provider) {
 
 function createRadioResource(url) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, val) => { if (!settled) { settled = true; fn(val); } };
+
     const ffmpeg = spawn(ffmpegPath, [
       '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
       '-i', url,
       '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    ffmpeg.stderr.on('data', d => console.error('[Radio ffmpeg]', d.toString().trim()));
-    ffmpeg.stdout.once('readable', () => {
-      resolve(createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
+    let stderrBuf = '';
+    ffmpeg.stderr.on('data', d => {
+      const s = d.toString();
+      stderrBuf += s;
+      console.error('[Radio ffmpeg]', s.trim());
     });
-    ffmpeg.on('error', reject);
+    ffmpeg.stdout.once('readable', () => {
+      done(resolve, createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
+    });
+    ffmpeg.on('error', err => done(reject, err));
     ffmpeg.stdout.on('error', () => {});
-    ffmpeg.on('close', code => { if (code !== 0) reject(new Error(`ffmpeg exited with code ${code}`)); });
+    ffmpeg.on('close', code => {
+      if (code !== 0) done(reject, new Error(`ffmpeg exited (${code}): ${stderrBuf.split('\n').pop()?.trim() ?? ''}`));
+    });
   });
 }
 
@@ -686,8 +696,34 @@ async function handleProvider(interaction) {
   await interaction.reply({ content: `✅ Music source set to **${label}**.`, flags: 64 });
 }
 
+async function handleVoiceStateUpdate(oldState, newState) {
+  // Only care about users leaving a channel
+  if (!oldState.channel) return;
+  const channel = oldState.channel;
+  const botId   = oldState.guild.members.me?.id;
+  if (!botId) return;
+
+  // Bot must be in that channel
+  if (!channel.members.has(botId)) return;
+
+  // Check if any non-bot members remain
+  const humans = channel.members.filter(m => !m.user.bot);
+  if (humans.size > 0) return;
+
+  // Everyone left — stop and disconnect
+  const session = sessions.get(oldState.guild.id);
+  if (!session) return;
+  console.log('[Music] Voice channel empty — disconnecting.');
+  session._disconnect();
+  session._clearIdleTimer();
+  delete musicState[oldState.guild.id];
+  saveState();
+  sessions.delete(oldState.guild.id);
+  await session.updateListMessage().catch(() => {});
+}
+
 ensureYtDlp().then(() => updateYtDlp()).catch(() => {});
 
 play.getFreeClientID().then(id => play.setToken({ soundcloud: { client_id: id } })).catch(() => {});
 
-module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider, handleRadio };
+module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleProvider, handleRadio, handleVoiceStateUpdate };
