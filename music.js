@@ -271,13 +271,13 @@ class Session {
 function createYtDlpResource(url) {
   return new Promise((resolve, reject) => {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
-    // Use iOS player client — bypasses YouTube bot detection without cookies/Deno
+    // Try multiple player clients to bypass bot detection; bestaudio* accepts muxed fallback
     const ytdlpArgs = [
-      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+      '-f', 'bestaudio*/best',
       '--no-playlist',
       '-o', '-',
       '--quiet',
-      '--extractor-args', 'youtube:player_client=ios,mweb',
+      '--extractor-args', 'youtube:player_client=ios,android,mweb',
     ];
     if (fs.existsSync(cookiesFile)) ytdlpArgs.push('--cookies', cookiesFile);
     ytdlpArgs.push(url);
