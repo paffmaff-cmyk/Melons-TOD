@@ -10,7 +10,7 @@ const https     = require('https');
 const fs        = require('fs');
 const path      = require('path');
 
-const YTDLP_PATH   = path.join(__dirname, 'yt-dlp.exe');
+const YTDLP_PATH   = path.join(__dirname, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 const STATE_FILE   = path.join(__dirname, 'music_state.json');
 const HISTORY_FILE = path.join(__dirname, 'music_history.json');
 const IDLE_TIMEOUT = 2 * 60 * 1000;
@@ -28,11 +28,12 @@ async function ensureYtDlp() {
         if (res.statusCode === 301 || res.statusCode === 302) return get(res.headers.location, hops + 1);
         if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
         res.pipe(file);
-        file.on('finish', () => { file.close(); resolve(); });
+        file.on('finish', () => { file.close(); if (process.platform !== 'win32') fs.chmodSync(YTDLP_PATH, 0o755); resolve(); });
         file.on('error', reject);
       }).on('error', reject);
     };
-    get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe');
+    const asset = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+    get(`https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}`);
   });
   console.log('[Music] yt-dlp.exe ready.');
 }
