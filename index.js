@@ -369,26 +369,37 @@ const charsState = new Map();
 // pendingOverrides: userId → { channelId, slotNum, displayName, promptMsgId?, promptDeleteTimer? }
 const pendingOverrides = new Map();
 
-function charsSlotCount(boss) { return boss === 'Queen Ant' ? 11 : 9; }
+const MAGES_SLOTS = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
+
+function charsSlotCount(boss) {
+  if (boss === 'Queen Ant')  return 11;
+  if (boss === 'Main Mages') return MAGES_SLOTS.length;
+  return 9; // Zaken
+}
 
 function charsSlotName(boss, slotNum) {
-  if (boss === 'Queen Ant') return slotNum <= 9 ? `AQ${slotNum}` : `PK${slotNum - 9}`;
+  if (boss === 'Queen Ant')  return slotNum <= 9 ? `AQ${slotNum}` : `PK${slotNum - 9}`;
+  if (boss === 'Main Mages') return MAGES_SLOTS[slotNum - 1];
   return `Zaken ${slotNum}`;
 }
 
-// Parse a chat message into a slot number (or null). Queen Ant supports PK aliases.
+// Parse a chat message into a slot number (or null).
 function parseCharsInput(boss, text) {
   const s = text.trim();
   if (boss === 'Queen Ant') {
-    // PK / karma → PK1 (slot 10), PK2 / karma2 (slot 11)
     if (/^(?:pk|karma)\s*1?$/i.test(s)) return 10;
     if (/^(?:pk|karma)\s*2$/i.test(s))  return 11;
-    // aq10 / aq11
     if (/^aq\s*10$/i.test(s)) return 10;
     if (/^aq\s*11$/i.test(s)) return 11;
-    // aq1-aq9 or bare 1-9
     const m = s.match(/^(?:aq\s*)?([1-9])$/i);
     if (m) return parseInt(m[1]);
+  } else if (boss === 'Main Mages') {
+    // By role name (bp1, se, dd2, pony, etc.)
+    const idx = MAGES_SLOTS.findIndex(n => n.toLowerCase() === s.toLowerCase());
+    if (idx !== -1) return idx + 1;
+    // By number 1-13
+    const m = s.match(/^(\d{1,2})$/);
+    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= MAGES_SLOTS.length) return n; }
   } else {
     const m = s.match(/^(?:zaken\s*)?([1-9])$/i);
     if (m) return parseInt(m[1]);
@@ -411,13 +422,16 @@ function buildCharsEmbed(boss, slots, expired = false) {
   }
   const hint = boss === 'Queen Ant'
     ? 'Type `1`–`9` for AQ slots, `pk`/`pk2` or `karma`/`karma2` for PK slots, or use the buttons below.'
+    : boss === 'Main Mages'
+    ? 'Type the role name (e.g. `se`, `bd`, `dd1`, `pony`) or its number `1`–`13`, or use the buttons below.'
     : 'Type `1`–`9` or use the buttons below.';
   const instructions = expired
     ? ''
     : `-# **How to sign up:** ${hint}\n-# Click your own slot again to leave it. If a slot is taken you will be asked to confirm an override.\n\n`;
 
+  const color = expired ? 0x95a5a6 : boss === 'Queen Ant' ? 0xED4245 : boss === 'Main Mages' ? 0xE67E22 : 0x5865F2;
   return new EmbedBuilder()
-    .setColor(expired ? 0x95a5a6 : (boss === 'Queen Ant' ? 0xED4245 : 0x5865F2))
+    .setColor(color)
     .setTitle(expired ? `${boss} — Char Signup  ⚠️ EXPIRED` : `${boss} — Char Signup`)
     .setDescription(instructions + lines.join('\n'))
     .setFooter({ text: expired ? 'This roster has expired. Leader can use /chars to start a new one.' : 'Expires in 4h • Use buttons or type slot number in chat' });
@@ -516,8 +530,9 @@ const COMMANDS = [
     .setDescription('Open a char signup sheet for a boss')
     .addStringOption(o => o.setName('boss').setDescription('Which boss').setRequired(true)
       .addChoices(
-        { name: 'Queen Ant', value: 'Queen Ant' },
-        { name: 'Zaken',     value: 'Zaken'     },
+        { name: 'Queen Ant',  value: 'Queen Ant'  },
+        { name: 'Zaken',      value: 'Zaken'      },
+        { name: 'Main Mages', value: 'Main Mages' },
       ))
     .toJSON(),
 ];

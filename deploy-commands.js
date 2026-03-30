@@ -70,8 +70,9 @@ const commands = [
     .setDescription('Open a char signup sheet for a boss')
     .addStringOption(o => o.setName('boss').setDescription('Which boss').setRequired(true)
       .addChoices(
-        { name: 'Queen Ant', value: 'Queen Ant' },
-        { name: 'Zaken',     value: 'Zaken'     },
+        { name: 'Queen Ant',  value: 'Queen Ant'  },
+        { name: 'Zaken',      value: 'Zaken'      },
+        { name: 'Main Mages', value: 'Main Mages' },
       ))
     .toJSON(),
 
