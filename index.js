@@ -364,14 +364,21 @@ function buildOptionsComponents() {
 }
 
 // ── Chars signup ──────────────────────────────────────────────
-// charsState: channelId → { boss, prefix, slots: Map<num, {userId, displayName}>, messageId, expireTimer, deleteTimer }
+// charsState: channelId → { boss, prefix, slots: Map<num, {userId, displayName, overriddenFrom?}>, messageId, expireTimer, deleteTimer }
 const charsState = new Map();
+// pendingOverrides: userId → { channelId, slotNum, displayName, promptMsgId?, promptDeleteTimer? }
+const pendingOverrides = new Map();
 
 function buildCharsEmbed(boss, prefix, slots, expired = false) {
   const lines = [];
   for (let i = 1; i <= 9; i++) {
     const entry = slots.get(i);
-    lines.push(entry ? `**${prefix}${i}** — ${entry.displayName}` : `**${prefix}${i}** — *empty*`);
+    if (entry) {
+      const override = entry.overriddenFrom ? ` → ~~${entry.overriddenFrom}~~` : '';
+      lines.push(`**${prefix}${i}** — ${entry.displayName}${override}`);
+    } else {
+      lines.push(`**${prefix}${i}** — *empty*`);
+    }
   }
   const embed = new EmbedBuilder()
     .setColor(expired ? 0x95a5a6 : (boss === 'Queen Ant' ? 0xED4245 : 0x5865F2))
@@ -398,7 +405,8 @@ function buildCharsComponents(prefix, slots, disabled = false) {
   return rows;
 }
 
-async function applyCharsSlot(channelId, userId, displayName, slotNum) {
+// Returns 'assigned'|'removed'|'taken'|'expired'
+async function applyCharsSlot(channelId, userId, displayName, slotNum, override = false) {
   const state = charsState.get(channelId);
   if (!state) return 'expired';
 
@@ -409,15 +417,19 @@ async function applyCharsSlot(channelId, userId, displayName, slotNum) {
   }
 
   if (userCurrentSlot === slotNum) {
-    // Toggle off
     state.slots.delete(slotNum);
     return 'removed';
   }
 
-  if (state.slots.has(slotNum)) return 'taken';
+  const existing = state.slots.get(slotNum);
+  if (existing && !override) return 'taken';
 
   if (userCurrentSlot !== null) state.slots.delete(userCurrentSlot);
-  state.slots.set(slotNum, { userId, displayName });
+  state.slots.set(slotNum, {
+    userId,
+    displayName,
+    overriddenFrom: (existing && override) ? existing.displayName : undefined,
+  });
   return 'assigned';
 }
 
@@ -686,14 +698,14 @@ client.on('interactionCreate', async interaction => {
               components: buildCharsComponents(prefix, slots, true),
             });
           } catch (_) {}
-          // After 1 more hour (5h total): delete message
+          // After 10 more seconds (20s total): delete message
           state.deleteTimer = setTimeout(async () => {
             try {
               const m = await interaction.channel.messages.fetch(state.messageId);
               await m.delete();
             } catch (_) {}
-          }, 60 * 60 * 1000);
-        }, 4 * 60 * 60 * 1000);
+          }, 10 * 1000);
+        }, 10 * 1000);
 
         return;
       }
@@ -743,9 +755,17 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         if (result === 'taken') {
-          const state = charsState.get(interaction.channelId);
+          const state   = charsState.get(interaction.channelId);
           const takenBy = state?.slots.get(slotNum)?.displayName ?? 'someone';
-          await interaction.reply({ content: `❌ **${state?.prefix ?? ''}${slotNum}** is already taken by **${takenBy}**.`, flags: MessageFlags.Ephemeral });
+          pendingOverrides.set(interaction.user.id, { channelId: interaction.channelId, slotNum, displayName });
+          await interaction.reply({
+            content: `**${state?.prefix ?? ''}${slotNum}** is taken by **${takenBy}**. Override?`,
+            components: [new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId('chars_override_yes').setLabel('Yes, override').setStyle(ButtonStyle.Danger),
+              new ButtonBuilder().setCustomId('chars_override_no').setLabel('No').setStyle(ButtonStyle.Secondary),
+            )],
+            flags: MessageFlags.Ephemeral,
+          });
           return;
         }
 
@@ -754,6 +774,37 @@ client.on('interactionCreate', async interaction => {
           embeds: [buildCharsEmbed(state.boss, state.prefix, state.slots)],
           components: buildCharsComponents(state.prefix, state.slots),
         });
+        return;
+      }
+
+      if (id === 'chars_override_yes' || id === 'chars_override_no') {
+        const pending = pendingOverrides.get(interaction.user.id);
+        pendingOverrides.delete(interaction.user.id);
+        if (pending?.promptDeleteTimer) clearTimeout(pending.promptDeleteTimer);
+        if (!pending) {
+          await interaction.update({ content: '❌ Override request expired.', components: [] });
+          return;
+        }
+        if (id === 'chars_override_no') {
+          await interaction.update({ content: 'Cancelled.', components: [] });
+          return;
+        }
+        // Confirm override
+        const result = await applyCharsSlot(pending.channelId, interaction.user.id, pending.displayName, pending.slotNum, true);
+        if (result === 'expired') {
+          await interaction.update({ content: '❌ This roster has expired.', components: [] });
+          return;
+        }
+        const state = charsState.get(pending.channelId);
+        try {
+          const ch = await client.channels.fetch(pending.channelId);
+          const m  = await ch.messages.fetch(state.messageId);
+          await m.edit({
+            embeds: [buildCharsEmbed(state.boss, state.prefix, state.slots)],
+            components: buildCharsComponents(state.prefix, state.slots),
+          });
+        } catch (_) {}
+        await interaction.update({ content: `✅ You now hold **${state.prefix}${pending.slotNum}**.`, components: [] });
         return;
       }
 
@@ -1195,8 +1246,26 @@ client.on('messageCreate', async message => {
 
       if (result === 'taken') {
         const takenBy = charsSession.slots.get(slotNum)?.displayName ?? 'someone';
-        const notif = await message.channel.send(`❌ <@${message.author.id}> **${charsSession.prefix}${slotNum}** is already taken by **${takenBy}**.`);
-        setTimeout(() => notif.delete().catch(() => {}), 5000);
+        // Store pending override and send prompt with Yes/No buttons
+        if (pendingOverrides.has(message.author.id)) {
+          try { const old = pendingOverrides.get(message.author.id); if (old.promptMsgId) { const om = await message.channel.messages.fetch(old.promptMsgId).catch(() => null); if (om) await om.delete().catch(() => {}); } } catch (_) {}
+          clearTimeout(pendingOverrides.get(message.author.id).promptDeleteTimer);
+        }
+        pendingOverrides.set(message.author.id, { channelId: message.channelId, slotNum, displayName, promptMsgId: null, promptDeleteTimer: null });
+        const notif = await message.channel.send({
+          content: `<@${message.author.id}> **${charsSession.prefix}${slotNum}** is taken by **${takenBy}**. Override?`,
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('chars_override_yes').setLabel('Yes, override').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('chars_override_no').setLabel('No').setStyle(ButtonStyle.Secondary),
+          )],
+        });
+        const pending = pendingOverrides.get(message.author.id);
+        pending.promptMsgId = notif.id;
+        // Auto-delete prompt after 30s if not answered
+        pending.promptDeleteTimer = setTimeout(async () => {
+          pendingOverrides.delete(message.author.id);
+          try { await notif.delete(); } catch (_) {}
+        }, 30 * 1000);
         return;
       }
 
