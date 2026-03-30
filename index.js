@@ -363,6 +363,64 @@ function buildOptionsComponents() {
   ];
 }
 
+// ── Chars signup ──────────────────────────────────────────────
+// charsState: channelId → { boss, prefix, slots: Map<num, {userId, displayName}>, messageId, expireTimer, deleteTimer }
+const charsState = new Map();
+
+function buildCharsEmbed(boss, prefix, slots, expired = false) {
+  const lines = [];
+  for (let i = 1; i <= 9; i++) {
+    const entry = slots.get(i);
+    lines.push(entry ? `**${prefix}${i}** — ${entry.displayName}` : `**${prefix}${i}** — *empty*`);
+  }
+  const embed = new EmbedBuilder()
+    .setColor(expired ? 0x95a5a6 : (boss === 'Queen Ant' ? 0xED4245 : 0x5865F2))
+    .setTitle(expired ? `${boss} — Char Signup  ⚠️ EXPIRED` : `${boss} — Char Signup`)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: expired ? 'This roster has expired. Leader can use /chars to start a new one.' : 'Expires in 4h • Use buttons or type slot number in chat' });
+  return embed;
+}
+
+function buildCharsComponents(prefix, slots, disabled = false) {
+  const rows = [new ActionRowBuilder(), new ActionRowBuilder()];
+  for (let i = 1; i <= 9; i++) {
+    const entry = slots.get(i);
+    const label = entry
+      ? `${prefix}${i} — ${entry.displayName.slice(0, 20)}`
+      : `${prefix}${i}`;
+    const btn = new ButtonBuilder()
+      .setCustomId(`chars_slot|${i}`)
+      .setLabel(label)
+      .setStyle(entry ? ButtonStyle.Success : ButtonStyle.Secondary)
+      .setDisabled(disabled);
+    (i <= 5 ? rows[0] : rows[1]).addComponents(btn);
+  }
+  return rows;
+}
+
+async function applyCharsSlot(channelId, userId, displayName, slotNum) {
+  const state = charsState.get(channelId);
+  if (!state) return 'expired';
+
+  // Find if user already holds a slot
+  let userCurrentSlot = null;
+  for (const [num, entry] of state.slots.entries()) {
+    if (entry.userId === userId) { userCurrentSlot = num; break; }
+  }
+
+  if (userCurrentSlot === slotNum) {
+    // Toggle off
+    state.slots.delete(slotNum);
+    return 'removed';
+  }
+
+  if (state.slots.has(slotNum)) return 'taken';
+
+  if (userCurrentSlot !== null) state.slots.delete(userCurrentSlot);
+  state.slots.set(slotNum, { userId, displayName });
+  return 'assigned';
+}
+
 // ── Commands ──────────────────────────────────────────────────
 const COMMANDS = [
   new SlashCommandBuilder()
@@ -401,6 +459,16 @@ const COMMANDS = [
     .addRoleOption(o => o.setName('player').setDescription('Select the role/player to congratulate').setRequired(true))
     .addStringOption(o => o.setName('item').setDescription('Epic item').setRequired(true)
       .addChoices(...EPIC_ITEMS))
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('chars')
+    .setDescription('Open a char signup sheet for a boss')
+    .addStringOption(o => o.setName('boss').setDescription('Which boss').setRequired(true)
+      .addChoices(
+        { name: 'Queen Ant', value: 'Queen Ant' },
+        { name: 'Zaken',     value: 'Zaken'     },
+      ))
     .toJSON(),
 ];
 
@@ -580,6 +648,55 @@ client.on('interactionCreate', async interaction => {
         });
         return;
       }
+      // ── /chars ──
+      if (interaction.commandName === 'chars') {
+        const boss   = interaction.options.getString('boss');
+        const prefix = boss === 'Queen Ant' ? 'AQ' : 'Zaken ';
+
+        // Cancel any existing session in this channel
+        const old = charsState.get(interaction.channelId);
+        if (old) {
+          clearTimeout(old.expireTimer);
+          clearTimeout(old.deleteTimer);
+          try {
+            const oldMsg = await interaction.channel.messages.fetch(old.messageId);
+            await oldMsg.delete();
+          } catch (_) {}
+        }
+
+        const slots = new Map();
+        const state = { boss, prefix, slots, messageId: null, expireTimer: null, deleteTimer: null };
+        charsState.set(interaction.channelId, state);
+
+        await interaction.reply({
+          embeds: [buildCharsEmbed(boss, prefix, slots)],
+          components: buildCharsComponents(prefix, slots),
+        });
+
+        const msg = await interaction.fetchReply();
+        state.messageId = msg.id;
+
+        // After 4h: disable buttons and mark expired
+        state.expireTimer = setTimeout(async () => {
+          charsState.delete(interaction.channelId);
+          try {
+            const m = await interaction.channel.messages.fetch(state.messageId);
+            await m.edit({
+              embeds: [buildCharsEmbed(boss, prefix, slots, true)],
+              components: buildCharsComponents(prefix, slots, true),
+            });
+          } catch (_) {}
+          // After 1 more hour (5h total): delete message
+          state.deleteTimer = setTimeout(async () => {
+            try {
+              const m = await interaction.channel.messages.fetch(state.messageId);
+              await m.delete();
+            } catch (_) {}
+          }, 60 * 60 * 1000);
+        }, 4 * 60 * 60 * 1000);
+
+        return;
+      }
     }
 
     // ── Select menu ─────────────────────────────────────────────
@@ -614,6 +731,31 @@ client.on('interactionCreate', async interaction => {
 
       // Music buttons
       if (id.startsWith('music_') || id === 'radio_stop') { await music.handleButton(interaction); return; }
+
+      // Chars slot buttons
+      if (id.startsWith('chars_slot|')) {
+        const slotNum     = parseInt(id.split('|')[1]);
+        const displayName = interaction.member?.displayName ?? interaction.user.username;
+        const result      = await applyCharsSlot(interaction.channelId, interaction.user.id, displayName, slotNum);
+
+        if (result === 'expired') {
+          await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        if (result === 'taken') {
+          const state = charsState.get(interaction.channelId);
+          const takenBy = state?.slots.get(slotNum)?.displayName ?? 'someone';
+          await interaction.reply({ content: `❌ **${state?.prefix ?? ''}${slotNum}** is already taken by **${takenBy}**.`, flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const state = charsState.get(interaction.channelId);
+        await interaction.update({
+          embeds: [buildCharsEmbed(state.boss, state.prefix, state.slots)],
+          components: buildCharsComponents(state.prefix, state.slots),
+        });
+        return;
+      }
 
 
       // Boss options
@@ -1028,6 +1170,49 @@ client.on('interactionCreate', async interaction => {
 // ── Image upload listener ──────────────────────────────────────
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+
+  // ── Chars chat shortcut ────────────────────────────────────
+  const charsSession = charsState.get(message.channelId);
+  if (charsSession) {
+    const content = message.content.trim();
+    const boss    = charsSession.boss;
+    let slotNum   = null;
+
+    if (boss === 'Queen Ant') {
+      const m = content.match(/^(?:aq\s*)?([1-9])$/i);
+      if (m) slotNum = parseInt(m[1]);
+    } else {
+      const m = content.match(/^(?:zaken\s*)?([1-9])$/i);
+      if (m) slotNum = parseInt(m[1]);
+    }
+
+    if (slotNum !== null) {
+      try { await message.delete(); } catch (_) {}
+
+      const member      = await message.guild?.members.fetch(message.author.id).catch(() => null);
+      const displayName = member?.displayName ?? message.author.username;
+      const result      = await applyCharsSlot(message.channelId, message.author.id, displayName, slotNum);
+
+      if (result === 'taken') {
+        const takenBy = charsSession.slots.get(slotNum)?.displayName ?? 'someone';
+        const notif = await message.channel.send(`❌ <@${message.author.id}> **${charsSession.prefix}${slotNum}** is already taken by **${takenBy}**.`);
+        setTimeout(() => notif.delete().catch(() => {}), 5000);
+        return;
+      }
+
+      if (result !== 'expired') {
+        try {
+          const m = await message.channel.messages.fetch(charsSession.messageId);
+          await m.edit({
+            embeds: [buildCharsEmbed(charsSession.boss, charsSession.prefix, charsSession.slots)],
+            components: buildCharsComponents(charsSession.prefix, charsSession.slots),
+          });
+        } catch (_) {}
+      }
+      return;
+    }
+  }
+
   const waiting = waitingForImage.get(message.author.id);
   if (!waiting) return;
   if (message.channelId !== waiting.channelId) return;

@@ -66,6 +66,16 @@ const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('chars')
+    .setDescription('Open a char signup sheet for a boss')
+    .addStringOption(o => o.setName('boss').setDescription('Which boss').setRequired(true)
+      .addChoices(
+        { name: 'Queen Ant', value: 'Queen Ant' },
+        { name: 'Zaken',     value: 'Zaken'     },
+      ))
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('gratz')
     .setDescription('Congratulate a player on an epic drop')
     .addRoleOption(o => o.setName('player').setDescription('Select the role/player to congratulate').setRequired(true))
