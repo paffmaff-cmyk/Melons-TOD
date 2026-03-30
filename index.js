@@ -364,43 +364,75 @@ function buildOptionsComponents() {
 }
 
 // ── Chars signup ──────────────────────────────────────────────
-// charsState: channelId → { boss, prefix, slots: Map<num, {userId, displayName, overriddenFrom?}>, messageId, expireTimer, deleteTimer }
+// charsState: channelId → { boss, slots: Map<num, {userId, displayName, overriddenFrom?}>, messageId, expireTimer, deleteTimer }
 const charsState = new Map();
 // pendingOverrides: userId → { channelId, slotNum, displayName, promptMsgId?, promptDeleteTimer? }
 const pendingOverrides = new Map();
 
-function buildCharsEmbed(boss, prefix, slots, expired = false) {
+function charsSlotCount(boss) { return boss === 'Queen Ant' ? 11 : 9; }
+
+function charsSlotName(boss, slotNum) {
+  if (boss === 'Queen Ant') return slotNum <= 9 ? `AQ${slotNum}` : `PK${slotNum - 9}`;
+  return `Zaken ${slotNum}`;
+}
+
+// Parse a chat message into a slot number (or null). Queen Ant supports PK aliases.
+function parseCharsInput(boss, text) {
+  const s = text.trim();
+  if (boss === 'Queen Ant') {
+    // PK / karma → PK1 (slot 10), PK2 / karma2 (slot 11)
+    if (/^(?:pk|karma)\s*1?$/i.test(s)) return 10;
+    if (/^(?:pk|karma)\s*2$/i.test(s))  return 11;
+    // aq10 / aq11
+    if (/^aq\s*10$/i.test(s)) return 10;
+    if (/^aq\s*11$/i.test(s)) return 11;
+    // aq1-aq9 or bare 1-9
+    const m = s.match(/^(?:aq\s*)?([1-9])$/i);
+    if (m) return parseInt(m[1]);
+  } else {
+    const m = s.match(/^(?:zaken\s*)?([1-9])$/i);
+    if (m) return parseInt(m[1]);
+  }
+  return null;
+}
+
+function buildCharsEmbed(boss, slots, expired = false) {
+  const total = charsSlotCount(boss);
   const lines = [];
-  for (let i = 1; i <= 9; i++) {
+  for (let i = 1; i <= total; i++) {
     const entry = slots.get(i);
+    const name  = charsSlotName(boss, i);
     if (entry) {
       const override = entry.overriddenFrom ? ` → ~~${entry.overriddenFrom}~~` : '';
-      lines.push(`**${prefix}${i}** — ${entry.displayName}${override}`);
+      lines.push(`**${name}** — ${entry.displayName}${override}`);
     } else {
-      lines.push(`**${prefix}${i}** — *empty*`);
+      lines.push(`**${name}** — *empty*`);
     }
   }
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setColor(expired ? 0x95a5a6 : (boss === 'Queen Ant' ? 0xED4245 : 0x5865F2))
     .setTitle(expired ? `${boss} — Char Signup  ⚠️ EXPIRED` : `${boss} — Char Signup`)
     .setDescription(lines.join('\n'))
     .setFooter({ text: expired ? 'This roster has expired. Leader can use /chars to start a new one.' : 'Expires in 4h • Use buttons or type slot number in chat' });
-  return embed;
 }
 
-function buildCharsComponents(prefix, slots, disabled = false) {
-  const rows = [new ActionRowBuilder(), new ActionRowBuilder()];
-  for (let i = 1; i <= 9; i++) {
+function buildCharsComponents(boss, slots, disabled = false) {
+  const total = charsSlotCount(boss);
+  const rows  = [];
+  let   row   = new ActionRowBuilder();
+  for (let i = 1; i <= total; i++) {
     const entry = slots.get(i);
-    const label = entry
-      ? `${prefix}${i} — ${entry.displayName.slice(0, 20)}`
-      : `${prefix}${i}`;
-    const btn = new ButtonBuilder()
-      .setCustomId(`chars_slot|${i}`)
-      .setLabel(label)
-      .setStyle(entry ? ButtonStyle.Success : ButtonStyle.Secondary)
-      .setDisabled(disabled);
-    (i <= 5 ? rows[0] : rows[1]).addComponents(btn);
+    const name  = charsSlotName(boss, i);
+    const label = entry ? `${name} — ${entry.displayName.slice(0, 20)}` : name;
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`chars_slot|${i}`)
+        .setLabel(label)
+        .setStyle(entry ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setDisabled(disabled),
+    );
+    // 5 buttons per row
+    if (i % 5 === 0 || i === total) { rows.push(row); row = new ActionRowBuilder(); }
   }
   return rows;
 }
@@ -410,7 +442,6 @@ async function applyCharsSlot(channelId, userId, displayName, slotNum, override 
   const state = charsState.get(channelId);
   if (!state) return 'expired';
 
-  // Find if user already holds a slot
   let userCurrentSlot = null;
   for (const [num, entry] of state.slots.entries()) {
     if (entry.userId === userId) { userCurrentSlot = num; break; }
@@ -662,8 +693,7 @@ client.on('interactionCreate', async interaction => {
       }
       // ── /chars ──
       if (interaction.commandName === 'chars') {
-        const boss   = interaction.options.getString('boss');
-        const prefix = boss === 'Queen Ant' ? 'AQ' : 'Zaken ';
+        const boss = interaction.options.getString('boss');
 
         // Cancel any existing session in this channel
         const old = charsState.get(interaction.channelId);
@@ -677,25 +707,25 @@ client.on('interactionCreate', async interaction => {
         }
 
         const slots = new Map();
-        const state = { boss, prefix, slots, messageId: null, expireTimer: null, deleteTimer: null };
+        const state = { boss, slots, messageId: null, expireTimer: null, deleteTimer: null };
         charsState.set(interaction.channelId, state);
 
         await interaction.reply({
-          embeds: [buildCharsEmbed(boss, prefix, slots)],
-          components: buildCharsComponents(prefix, slots),
+          embeds: [buildCharsEmbed(boss, slots)],
+          components: buildCharsComponents(boss, slots),
         });
 
         const msg = await interaction.fetchReply();
         state.messageId = msg.id;
 
-        // After 4h: disable buttons and mark expired
+        // After 10s: disable buttons and mark expired
         state.expireTimer = setTimeout(async () => {
           charsState.delete(interaction.channelId);
           try {
             const m = await interaction.channel.messages.fetch(state.messageId);
             await m.edit({
-              embeds: [buildCharsEmbed(boss, prefix, slots, true)],
-              components: buildCharsComponents(prefix, slots, true),
+              embeds: [buildCharsEmbed(boss, slots, true)],
+              components: buildCharsComponents(boss, slots, true),
             });
           } catch (_) {}
           // After 10 more seconds (20s total): delete message
@@ -755,11 +785,12 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         if (result === 'taken') {
-          const state   = charsState.get(interaction.channelId);
-          const takenBy = state?.slots.get(slotNum)?.displayName ?? 'someone';
+          const state    = charsState.get(interaction.channelId);
+          const takenBy  = state?.slots.get(slotNum)?.displayName ?? 'someone';
+          const slotLabel = state ? charsSlotName(state.boss, slotNum) : String(slotNum);
           pendingOverrides.set(interaction.user.id, { channelId: interaction.channelId, slotNum, displayName });
           await interaction.reply({
-            content: `**${state?.prefix ?? ''}${slotNum}** is taken by **${takenBy}**. Override?`,
+            content: `**${slotLabel}** is taken by **${takenBy}**. Override?`,
             components: [new ActionRowBuilder().addComponents(
               new ButtonBuilder().setCustomId('chars_override_yes').setLabel('Yes, override').setStyle(ButtonStyle.Danger),
               new ButtonBuilder().setCustomId('chars_override_no').setLabel('No').setStyle(ButtonStyle.Secondary),
@@ -771,8 +802,8 @@ client.on('interactionCreate', async interaction => {
 
         const state = charsState.get(interaction.channelId);
         await interaction.update({
-          embeds: [buildCharsEmbed(state.boss, state.prefix, state.slots)],
-          components: buildCharsComponents(state.prefix, state.slots),
+          embeds: [buildCharsEmbed(state.boss, state.slots)],
+          components: buildCharsComponents(state.boss, state.slots),
         });
         return;
       }
@@ -800,11 +831,11 @@ client.on('interactionCreate', async interaction => {
           const ch = await client.channels.fetch(pending.channelId);
           const m  = await ch.messages.fetch(state.messageId);
           await m.edit({
-            embeds: [buildCharsEmbed(state.boss, state.prefix, state.slots)],
-            components: buildCharsComponents(state.prefix, state.slots),
+            embeds: [buildCharsEmbed(state.boss, state.slots)],
+            components: buildCharsComponents(state.boss, state.slots),
           });
         } catch (_) {}
-        await interaction.update({ content: `✅ You now hold **${state.prefix}${pending.slotNum}**.`, components: [] });
+        await interaction.update({ content: `✅ You now hold **${charsSlotName(state.boss, pending.slotNum)}**.`, components: [] });
         return;
       }
 
@@ -1225,17 +1256,7 @@ client.on('messageCreate', async message => {
   // ── Chars chat shortcut ────────────────────────────────────
   const charsSession = charsState.get(message.channelId);
   if (charsSession) {
-    const content = message.content.trim();
-    const boss    = charsSession.boss;
-    let slotNum   = null;
-
-    if (boss === 'Queen Ant') {
-      const m = content.match(/^(?:aq\s*)?([1-9])$/i);
-      if (m) slotNum = parseInt(m[1]);
-    } else {
-      const m = content.match(/^(?:zaken\s*)?([1-9])$/i);
-      if (m) slotNum = parseInt(m[1]);
-    }
+    const slotNum = parseCharsInput(charsSession.boss, message.content);
 
     if (slotNum !== null) {
       try { await message.delete(); } catch (_) {}
@@ -1245,15 +1266,17 @@ client.on('messageCreate', async message => {
       const result      = await applyCharsSlot(message.channelId, message.author.id, displayName, slotNum);
 
       if (result === 'taken') {
-        const takenBy = charsSession.slots.get(slotNum)?.displayName ?? 'someone';
-        // Store pending override and send prompt with Yes/No buttons
+        const takenBy   = charsSession.slots.get(slotNum)?.displayName ?? 'someone';
+        const slotLabel = charsSlotName(charsSession.boss, slotNum);
+        // Cancel any previous override prompt for this user
         if (pendingOverrides.has(message.author.id)) {
-          try { const old = pendingOverrides.get(message.author.id); if (old.promptMsgId) { const om = await message.channel.messages.fetch(old.promptMsgId).catch(() => null); if (om) await om.delete().catch(() => {}); } } catch (_) {}
-          clearTimeout(pendingOverrides.get(message.author.id).promptDeleteTimer);
+          const oldP = pendingOverrides.get(message.author.id);
+          clearTimeout(oldP.promptDeleteTimer);
+          if (oldP.promptMsgId) { message.channel.messages.fetch(oldP.promptMsgId).then(m => m.delete()).catch(() => {}); }
         }
         pendingOverrides.set(message.author.id, { channelId: message.channelId, slotNum, displayName, promptMsgId: null, promptDeleteTimer: null });
         const notif = await message.channel.send({
-          content: `<@${message.author.id}> **${charsSession.prefix}${slotNum}** is taken by **${takenBy}**. Override?`,
+          content: `<@${message.author.id}> **${slotLabel}** is taken by **${takenBy}**. Override?`,
           components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('chars_override_yes').setLabel('Yes, override').setStyle(ButtonStyle.Danger),
             new ButtonBuilder().setCustomId('chars_override_no').setLabel('No').setStyle(ButtonStyle.Secondary),
@@ -1261,7 +1284,6 @@ client.on('messageCreate', async message => {
         });
         const pending = pendingOverrides.get(message.author.id);
         pending.promptMsgId = notif.id;
-        // Auto-delete prompt after 30s if not answered
         pending.promptDeleteTimer = setTimeout(async () => {
           pendingOverrides.delete(message.author.id);
           try { await notif.delete(); } catch (_) {}
@@ -1273,8 +1295,8 @@ client.on('messageCreate', async message => {
         try {
           const m = await message.channel.messages.fetch(charsSession.messageId);
           await m.edit({
-            embeds: [buildCharsEmbed(charsSession.boss, charsSession.prefix, charsSession.slots)],
-            components: buildCharsComponents(charsSession.prefix, charsSession.slots),
+            embeds: [buildCharsEmbed(charsSession.boss, charsSession.slots)],
+            components: buildCharsComponents(charsSession.boss, charsSession.slots),
           });
         } catch (_) {}
       }
