@@ -718,7 +718,7 @@ client.on('interactionCreate', async interaction => {
         const msg = await interaction.fetchReply();
         state.messageId = msg.id;
 
-        // After 10s: disable buttons and mark expired
+        // After 4h: disable buttons and mark expired
         state.expireTimer = setTimeout(async () => {
           charsState.delete(interaction.channelId);
           try {
@@ -728,14 +728,14 @@ client.on('interactionCreate', async interaction => {
               components: buildCharsComponents(boss, slots, true),
             });
           } catch (_) {}
-          // After 10 more seconds (20s total): delete message
+          // After 1 more hour (5h total): delete message
           state.deleteTimer = setTimeout(async () => {
             try {
               const m = await interaction.channel.messages.fetch(state.messageId);
               await m.delete();
             } catch (_) {}
-          }, 10 * 1000);
-        }, 10 * 1000);
+          }, 60 * 60 * 1000);
+        }, 4 * 60 * 60 * 1000);
 
         return;
       }
