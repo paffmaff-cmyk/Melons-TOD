@@ -409,10 +409,17 @@ function buildCharsEmbed(boss, slots, expired = false) {
       lines.push(`**${name}** — *empty*`);
     }
   }
+  const hint = boss === 'Queen Ant'
+    ? 'Type `1`–`9` for AQ slots, `pk`/`pk2` or `karma`/`karma2` for PK slots, or use the buttons below.'
+    : 'Type `1`–`9` or use the buttons below.';
+  const instructions = expired
+    ? ''
+    : `-# **How to sign up:** ${hint}\n-# Click your own slot again to leave it. If a slot is taken you will be asked to confirm an override.\n\n`;
+
   return new EmbedBuilder()
     .setColor(expired ? 0x95a5a6 : (boss === 'Queen Ant' ? 0xED4245 : 0x5865F2))
     .setTitle(expired ? `${boss} — Char Signup  ⚠️ EXPIRED` : `${boss} — Char Signup`)
-    .setDescription(lines.join('\n'))
+    .setDescription(instructions + lines.join('\n'))
     .setFooter({ text: expired ? 'This roster has expired. Leader can use /chars to start a new one.' : 'Expires in 4h • Use buttons or type slot number in chat' });
 }
 
