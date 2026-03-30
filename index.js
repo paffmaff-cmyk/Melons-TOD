@@ -829,7 +829,7 @@ client.on('interactionCreate', async interaction => {
           pending.promptDeleteTimer = setTimeout(async () => {
             pendingOverrides.delete(interaction.user.id);
             try { await notif.delete(); } catch (_) {}
-          }, 30 * 1000);
+          }, 4 * 60 * 60 * 1000);
           return;
         }
 
@@ -850,7 +850,8 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         if (id === 'chars_override_no') {
-          await interaction.update({ content: 'Cancelled.', components: [] });
+          await interaction.deferUpdate();
+          await interaction.message.delete().catch(() => {});
           return;
         }
         // Confirm override
@@ -868,7 +869,8 @@ client.on('interactionCreate', async interaction => {
             components: buildCharsComponents(state.boss, state.slots),
           });
         } catch (_) {}
-        await interaction.update({ content: `✅ You now hold **${charsSlotName(state.boss, pending.slotNum)}**.`, components: [] });
+        await interaction.deferUpdate();
+        await interaction.message.delete().catch(() => {});
         return;
       }
 
@@ -1320,7 +1322,7 @@ client.on('messageCreate', async message => {
         pending.promptDeleteTimer = setTimeout(async () => {
           pendingOverrides.delete(message.author.id);
           try { await notif.delete(); } catch (_) {}
-        }, 30 * 1000);
+        }, 4 * 60 * 60 * 1000);
         return;
       }
 
