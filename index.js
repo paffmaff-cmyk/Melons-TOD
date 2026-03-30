@@ -414,8 +414,8 @@ function buildCharsEmbed(boss, slots, expired = false) {
     const entry = slots.get(i);
     const name  = charsSlotName(boss, i);
     if (entry) {
-      const override = entry.overriddenFrom ? ` → ~~${entry.overriddenFrom}~~` : '';
-      lines.push(`**${name}** — ${entry.displayName}${override}`);
+      const override = entry.overriddenFromId ? ` → ~~<@${entry.overriddenFromId}>~~` : '';
+      lines.push(`**${name}** — <@${entry.userId}>${override}`);
     } else {
       lines.push(`**${name}** — *empty*`);
     }
@@ -480,7 +480,7 @@ async function applyCharsSlot(channelId, userId, displayName, slotNum, override 
   state.slots.set(slotNum, {
     userId,
     displayName,
-    overriddenFrom: (existing && override) ? existing.displayName : undefined,
+    overriddenFromId: (existing && override) ? existing.userId : undefined,
   });
   return 'assigned';
 }
@@ -807,18 +807,29 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         if (result === 'taken') {
-          const state    = charsState.get(interaction.channelId);
-          const takenBy  = state?.slots.get(slotNum)?.displayName ?? 'someone';
-          const slotLabel = state ? charsSlotName(state.boss, slotNum) : String(slotNum);
-          pendingOverrides.set(interaction.user.id, { channelId: interaction.channelId, slotNum, displayName });
-          await interaction.reply({
-            content: `**${slotLabel}** is taken by **${takenBy}**. Override?`,
+          const state      = charsState.get(interaction.channelId);
+          const takenById  = state?.slots.get(slotNum)?.userId;
+          const slotLabel  = state ? charsSlotName(state.boss, slotNum) : String(slotNum);
+          if (pendingOverrides.has(interaction.user.id)) {
+            const oldP = pendingOverrides.get(interaction.user.id);
+            clearTimeout(oldP.promptDeleteTimer);
+            if (oldP.promptMsgId) interaction.channel.messages.fetch(oldP.promptMsgId).then(m => m.delete()).catch(() => {});
+          }
+          pendingOverrides.set(interaction.user.id, { channelId: interaction.channelId, slotNum, displayName, promptMsgId: null, promptDeleteTimer: null });
+          await interaction.deferUpdate();
+          const notif = await interaction.channel.send({
+            content: `<@${interaction.user.id}> **${slotLabel}** is taken by <@${takenById}>. Override?`,
             components: [new ActionRowBuilder().addComponents(
               new ButtonBuilder().setCustomId('chars_override_yes').setLabel('Yes, override').setStyle(ButtonStyle.Danger),
               new ButtonBuilder().setCustomId('chars_override_no').setLabel('No').setStyle(ButtonStyle.Secondary),
             )],
-            flags: MessageFlags.Ephemeral,
           });
+          const pending = pendingOverrides.get(interaction.user.id);
+          pending.promptMsgId = notif.id;
+          pending.promptDeleteTimer = setTimeout(async () => {
+            pendingOverrides.delete(interaction.user.id);
+            try { await notif.delete(); } catch (_) {}
+          }, 30 * 1000);
           return;
         }
 
@@ -1288,7 +1299,7 @@ client.on('messageCreate', async message => {
       const result      = await applyCharsSlot(message.channelId, message.author.id, displayName, slotNum);
 
       if (result === 'taken') {
-        const takenBy   = charsSession.slots.get(slotNum)?.displayName ?? 'someone';
+        const takenById = charsSession.slots.get(slotNum)?.userId;
         const slotLabel = charsSlotName(charsSession.boss, slotNum);
         // Cancel any previous override prompt for this user
         if (pendingOverrides.has(message.author.id)) {
@@ -1298,7 +1309,7 @@ client.on('messageCreate', async message => {
         }
         pendingOverrides.set(message.author.id, { channelId: message.channelId, slotNum, displayName, promptMsgId: null, promptDeleteTimer: null });
         const notif = await message.channel.send({
-          content: `<@${message.author.id}> **${slotLabel}** is taken by **${takenBy}**. Override?`,
+          content: `<@${message.author.id}> **${slotLabel}** is taken by <@${takenById}>. Override?`,
           components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('chars_override_yes').setLabel('Yes, override').setStyle(ButtonStyle.Danger),
             new ButtonBuilder().setCustomId('chars_override_no').setLabel('No').setStyle(ButtonStyle.Secondary),
