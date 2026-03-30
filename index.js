@@ -586,6 +586,9 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'music_search_select') {
       await music.handleSearchSelect(interaction); return;
     }
+    if (interaction.isStringSelectMenu() && interaction.customId === 'music_queue_select') {
+      await music.handleQueueSelect(interaction); return;
+    }
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_boss_edit') {
       const boss = findBoss(interaction.values[0]);
@@ -611,6 +614,7 @@ client.on('interactionCreate', async interaction => {
 
       // Music buttons
       if (id.startsWith('music_') || id === 'radio_stop') { await music.handleButton(interaction); return; }
+
 
       // Boss options
       if (id === 'back_to_options') {

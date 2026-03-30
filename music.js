@@ -95,6 +95,7 @@ class Session {
     this.listMessage  = null;  // resolved on first updateListMessage
     this.listChannel  = null;
     this.radioMessage = null;  // visible now-playing message for radio
+    this.listPage     = 0;     // current queue page shown in select menu
     this.playing      = false;
     this._loading      = false; // guard against concurrent _playNext calls
     this._idleTimer    = null;
@@ -381,6 +382,8 @@ function fmt(sec) {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }
 
+const PAGE_SIZE = 23; // songs per page in the select menu
+
 function buildQueueEmbed(session) {
   const embed = new EmbedBuilder().setColor(0x1db954).setTitle('🎵 Music Queue');
 
@@ -388,21 +391,30 @@ function buildQueueEmbed(session) {
     return embed.setDescription('Queue is empty — use `/play <song>` to add tracks.');
   }
 
-  const lines = session.queue.map((t, i) => {
+  const current = session.queue[session.currentIndex];
+
+  // Show now-playing prominently, then up to 10 upcoming songs
+  const lines = [];
+  for (let i = 0; i < session.queue.length; i++) {
+    const t = session.queue[i];
     const isCurrent = i === session.currentIndex;
-    const prefix = isCurrent && session.playing ? '▶️' : `\`${i + 1}.\``;
-    return `${prefix} **${t.title}** (${fmt(t.duration)}) — <@${t.requestedBy}>`;
-  });
+    if (isCurrent && session.playing) {
+      lines.push(`▶️ **${t.title}** (${fmt(t.duration)}) — <@${t.requestedBy}>`);
+    } else if (i > session.currentIndex && lines.length < 12) {
+      lines.push(`\`${i + 1}.\` ${t.title} (${fmt(t.duration)}) — <@${t.requestedBy}>`);
+    }
+  }
+  const upcoming = session.queue.length - session.currentIndex - 1;
+  if (upcoming > 11) lines.push(`*… and ${upcoming - 11} more in queue*`);
 
   embed.setDescription(lines.join('\n'));
 
-  const current = session.queue[session.currentIndex];
   if (current && session.playing) {
     embed.setThumbnail(current.thumbnail ?? null);
-    embed.setFooter({ text: `Now playing: ${current.title}` });
+    embed.setFooter({ text: `Now playing: ${current.title} · ${session.queue.length} song${session.queue.length !== 1 ? 's' : ''} in queue` });
   } else if (session._idleDeadline) {
     const ts = Math.floor(session._idleDeadline / 1000);
-    embed.setFooter({ text: `Queue clears <t:${ts}:R> — click a song or /play to resume.` });
+    embed.setFooter({ text: `Queue clears <t:${ts}:R> — pick a song or /play to resume.` });
   } else {
     embed.setFooter({ text: 'Queue cleared.' });
   }
@@ -413,33 +425,49 @@ function buildQueueComponents(session) {
   if (!session.queue.length) return [];
   const rows = [];
 
-  // Row 1: playback controls
-  const controls = [
-    new ButtonBuilder().setCustomId('music_stop').setLabel('⏹ Stop').setStyle(ButtonStyle.Danger).setDisabled(!session.playing),
-    new ButtonBuilder().setCustomId('music_clear').setLabel('🗑 Clear Queue').setStyle(ButtonStyle.Secondary),
-  ];
+  const totalPages = Math.ceil(session.queue.length / PAGE_SIZE);
+  const page       = Math.min(session.listPage ?? 0, totalPages - 1);
+
+  // Row 1: playback controls + page navigation
+  const controls = [];
   if (session.playing) {
-    controls.unshift(new ButtonBuilder().setCustomId('music_skip').setLabel('⏭ Skip').setStyle(ButtonStyle.Primary));
+    controls.push(new ButtonBuilder().setCustomId('music_skip').setLabel('⏭ Skip').setStyle(ButtonStyle.Primary));
+  }
+  controls.push(
+    new ButtonBuilder().setCustomId('music_stop').setLabel('⏹ Stop').setStyle(ButtonStyle.Danger).setDisabled(!session.playing),
+    new ButtonBuilder().setCustomId('music_clear').setLabel('🗑 Clear').setStyle(ButtonStyle.Secondary),
+  );
+  if (totalPages > 1) {
+    controls.push(
+      new ButtonBuilder().setCustomId('music_page_prev').setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+      new ButtonBuilder().setCustomId('music_page_next').setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+    );
   }
   rows.push(new ActionRowBuilder().addComponents(...controls));
 
-  // Rows 2-5: one button per queued song (skip currently playing, show all others)
-  // One song per row (vertical list), max 4 rows left after controls row
-  const buttons = session.queue
-    .map((t, i) => ({ t, i }))
-    .filter(({ i }) => !(i === session.currentIndex && session.playing))
-    .slice(0, 4);
+  // Row 2: select menu — current page of songs
+  const start     = page * PAGE_SIZE;
+  const pageItems = session.queue.slice(start, start + PAGE_SIZE);
+  const placeholder = totalPages > 1
+    ? `Songs ${start + 1}–${start + pageItems.length} of ${session.queue.length} · page ${page + 1}/${totalPages}`
+    : `${session.queue.length} song${session.queue.length !== 1 ? 's' : ''} in queue — pick one to jump`;
 
-  for (const { t, i } of buttons) {
-    rows.push(new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`music_jump_${i}`)
-        .setLabel(`${i + 1}. ${t.title.slice(0, 77)}`)
-        .setStyle(i < session.currentIndex ? ButtonStyle.Secondary : ButtonStyle.Success)
-    ));
-  }
+  rows.push(new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('music_queue_select')
+      .setPlaceholder(placeholder)
+      .addOptions(pageItems.map((t, i) => {
+        const idx       = start + i;
+        const isCurrent = idx === session.currentIndex && session.playing;
+        return {
+          label:   `${isCurrent ? '▶ ' : `${idx + 1}. `}${t.title.slice(0, 97)}`,
+          value:   String(idx),
+          default: isCurrent,
+        };
+      }))
+  ));
 
-  return rows.slice(0, 5);
+  return rows;
 }
 
 // ── Search embed ──────────────────────────────────────────────
@@ -649,33 +677,43 @@ async function handleButton(interaction) {
     return;
   }
 
-  if (id.startsWith('music_jump_')) {
-    const idx     = parseInt(id.split('_')[2]);
-    const { session } = getOrCreateSession(interaction.guildId);
-    await session.resolveListMessage(interaction.guild);
+  if (id === 'music_page_prev' || id === 'music_page_next') {
+    const session = sessions.get(interaction.guildId);
+    if (!session) { await interaction.deferUpdate(); return; }
+    const totalPages = Math.ceil(session.queue.length / PAGE_SIZE);
+    session.listPage = Math.max(0, Math.min(
+      (session.listPage ?? 0) + (id === 'music_page_next' ? 1 : -1),
+      totalPages - 1
+    ));
+    await interaction.deferUpdate();
+    await session.updateListMessage();
+    return;
+  }
+}
 
-    const voiceChannel = interaction.member.voice?.channel;
-    if (!voiceChannel) {
-      await interaction.reply({ content: '❌ Join a voice channel first.', flags: 64 });
-      autoDelete(interaction);
-      return;
-    }
+async function handleQueueSelect(interaction) {
+  const idx        = parseInt(interaction.values[0]);
+  const { session } = getOrCreateSession(interaction.guildId);
+  await session.resolveListMessage(interaction.guild);
+  if (!session.listChannel) session.listChannel = interaction.channel;
 
-    if (session.playing) {
-      await session.jumpTo(idx);
-    } else {
-      // Not connected — connect and start from this index
-      try {
-        await session.startFrom(idx, voiceChannel);
-      } catch (err) {
-        await interaction.reply({ content: `❌ ${err.message}`, flags: 64 });
-        autoDelete(interaction);
-        return;
-      }
-    }
-    await interaction.reply({ content: `⏩ Playing track ${idx + 1}.`, flags: 64 });
+  const voiceChannel = interaction.member.voice?.channel;
+  if (!voiceChannel) {
+    await interaction.reply({ content: '❌ Join a voice channel first.', flags: 64 });
     autoDelete(interaction);
     return;
+  }
+
+  await interaction.deferUpdate();
+
+  if (session.playing) {
+    await session.jumpTo(idx);
+  } else {
+    try {
+      await session.startFrom(idx, voiceChannel);
+    } catch (err) {
+      await interaction.followUp({ content: `❌ ${err.message}`, flags: 64 });
+    }
   }
 }
 
@@ -761,4 +799,4 @@ ensureYtDlp().then(() => updateYtDlp()).catch(() => {});
 
 play.getFreeClientID().then(id => play.setToken({ soundcloud: { client_id: id } })).catch(() => {});
 
-module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleRadio, handleVoiceStateUpdate };
+module.exports = { handlePlay, handleStop, handleButton, handleSearchSelect, handleQueueSelect, handleRadio, handleVoiceStateUpdate };
