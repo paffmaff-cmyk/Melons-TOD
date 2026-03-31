@@ -403,18 +403,19 @@ function saveCharsPersisted() {
   fs.writeFileSync(CHARS_PERSIST_FILE, JSON.stringify(charsPersisted, null, 2));
 }
 
-const MAGES_SLOTS = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
+const MAGES_SLOTS  = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
+const ZAKEN_SLOTS  = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2'];
 
 function charsSlotCount(boss) {
   if (boss === 'Queen Ant')  return 11;
   if (boss === 'Main Mages') return MAGES_SLOTS.length;
-  return 9; // Zaken
+  return ZAKEN_SLOTS.length; // Zaken
 }
 
 function charsSlotName(boss, slotNum) {
   if (boss === 'Queen Ant')  return slotNum <= 9 ? `AQ${slotNum}` : `PK${slotNum - 9}`;
   if (boss === 'Main Mages') return MAGES_SLOTS[slotNum - 1];
-  return `Zaken ${slotNum}`;
+  return ZAKEN_SLOTS[slotNum - 1];
 }
 
 // Parse a chat message into a slot number (or null).
@@ -435,8 +436,12 @@ function parseCharsInput(boss, text) {
     const m = s.match(/^(\d{1,2})$/);
     if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= MAGES_SLOTS.length) return n; }
   } else {
-    const m = s.match(/^(?:zaken\s*)?([1-9])$/i);
-    if (m) return parseInt(m[1]);
+    // By slot name (e.g. da-1, slh-8, bd-7)
+    const idx = ZAKEN_SLOTS.findIndex(n => n.toLowerCase() === s.toLowerCase());
+    if (idx !== -1) return idx + 1;
+    // By number 1-9
+    const m = s.match(/^(\d)$/);
+    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= ZAKEN_SLOTS.length) return n; }
   }
   return null;
 }
@@ -458,7 +463,7 @@ function buildCharsEmbed(boss, slots, expired = false) {
     ? 'Type `1`–`9` for AQ slots, `pk`/`pk2` or `karma`/`karma2` for PK slots, or use the buttons below.'
     : boss === 'Main Mages'
     ? 'Type the role name (e.g. `se`, `bd`, `dd1`, `pony`) or its number `1`–`13`, or use the buttons below.'
-    : 'Type `1`–`9` or use the buttons below.';
+    : 'Type the slot name (e.g. `da-1`, `slh-8`, `bp-2`) or its number `1`–`9`, or use the buttons below.';
   const instructions = expired
     ? ''
     : `-# **How to sign up:** ${hint}\n-# Click your own slot again to leave it. If a slot is taken you will be asked to confirm an override.\n\n`;
