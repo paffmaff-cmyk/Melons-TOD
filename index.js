@@ -406,6 +406,26 @@ function saveCharsPersisted() {
 const MAGES_SLOTS  = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
 const ZAKEN_SLOTS  = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2'];
 
+const CRYSTAL_EMOJI  = { blue: '🔵', green: '🟢', red: '🔴' };
+const CRYSTAL_LABEL  = { blue: 'B', green: 'G', red: 'R' };
+const CRYSTAL_LEVELS = ['11', '12', '13', '14'];
+const CRYSTAL_OPTIONS = [
+  ...CRYSTAL_LEVELS.map(l => ({ label: `🔵 B-${l}`, value: `blue_${l}` })),
+  ...CRYSTAL_LEVELS.map(l => ({ label: `🟢 G-${l}`, value: `green_${l}` })),
+  ...CRYSTAL_LEVELS.map(l => ({ label: `🔴 R-${l}`, value: `red_${l}` })),
+  { label: '❌ Clear crystal', value: 'clear' },
+];
+
+function parseCrystalInput(text) {
+  const m = text.trim().match(/^(blue?|b|gr(?:een?)?|g|red?|r)[-\s]?(1[1-4])$/i);
+  if (!m) return null;
+  const c = m[1].toLowerCase();
+  const color = (c === 'b' || c.startsWith('bl')) ? 'blue'
+              : (c === 'g' || c.startsWith('gr')) ? 'green'
+              : 'red';
+  return { color, level: parseInt(m[2]) };
+}
+
 function charsSlotCount(boss) {
   if (boss === 'Queen Ant')  return 11;
   if (boss === 'Main Mages') return MAGES_SLOTS.length;
@@ -446,7 +466,7 @@ function parseCharsInput(boss, text) {
   return null;
 }
 
-function buildCharsEmbed(boss, slots, expired = false) {
+function buildCharsEmbed(boss, slots, expired = false, crystals = new Map()) {
   const total = charsSlotCount(boss);
   const lines = [];
   for (let i = 1; i <= total; i++) {
@@ -454,7 +474,9 @@ function buildCharsEmbed(boss, slots, expired = false) {
     const name  = charsSlotName(boss, i);
     if (entry) {
       const override = entry.overriddenFromId ? ` → ~~<@${entry.overriddenFromId}>~~` : '';
-      lines.push(`**${name}** — <@${entry.userId}>${override}`);
+      const crystal  = boss === 'Zaken' && crystals.get(entry.userId);
+      const crystalStr = crystal ? ` ${CRYSTAL_EMOJI[crystal.color]} **${CRYSTAL_LABEL[crystal.color]}-${crystal.level}**` : '';
+      lines.push(`**${name}** — <@${entry.userId}>${override}${crystalStr}`);
     } else {
       lines.push(`**${name}** — *empty*`);
     }
@@ -463,7 +485,7 @@ function buildCharsEmbed(boss, slots, expired = false) {
     ? 'Type `1`–`9` for AQ slots, `pk`/`pk2` or `karma`/`karma2` for PK slots, or use the buttons below.'
     : boss === 'Main Mages'
     ? 'Type the role name (e.g. `se`, `bd`, `dd1`, `pony`) or its number `1`–`13`, or use the buttons below.'
-    : 'Type the slot name (e.g. `da-1`, `slh-8`, `bp-2`) or its number `1`–`9`, or use the buttons below.';
+    : 'Type the slot name (e.g. `da-1`, `slh-8`, `bp-2`) or its number `1`–`9`, or use the buttons below. Type your crystal (e.g. `blue 11`, `b-13`, `green 12`, `r14`) to set it.';
   const instructions = expired
     ? ''
     : `-# **How to sign up:** ${hint}\n-# Click your own slot again to leave it. If a slot is taken you will be asked to confirm an override.\n\n`;
@@ -494,6 +516,11 @@ function buildCharsComponents(boss, slots, disabled = false) {
     // 5 buttons per row
     if (i % 5 === 0 || i === total) { rows.push(row); row = new ActionRowBuilder(); }
   }
+  if (boss === 'Zaken' && !disabled) {
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('chars_crystal').setLabel('💎 Set Crystal').setStyle(ButtonStyle.Primary)
+    ));
+  }
   return rows;
 }
 
@@ -509,7 +536,8 @@ async function applyCharsSlot(channelId, userId, displayName, slotNum, override 
 
   if (userCurrentSlot === slotNum) {
     state.slots.delete(slotNum);
-    if (charsPersisted[channelId]) { charsPersisted[channelId].slots = [...state.slots.entries()]; saveCharsPersisted(); }
+    state.crystals?.delete(userId);
+    if (charsPersisted[channelId]) { charsPersisted[channelId].slots = [...state.slots.entries()]; charsPersisted[channelId].crystals = [...(state.crystals?.entries() ?? [])]; saveCharsPersisted(); }
     return 'removed';
   }
 
@@ -600,8 +628,9 @@ client.once('clientReady', async () => {
       try { const m = await channel.messages.fetch(entry.messageId); await m.delete(); } catch (_) {}
       delete charsPersisted[channelId];
     } else {
-      const slots = new Map(entry.slots ?? []);
-      const state = { boss: entry.boss, slots, messageId: entry.messageId, startedAt: entry.startedAt, expireTimer: null, deleteTimer: null };
+      const slots    = new Map(entry.slots ?? []);
+      const crystals = new Map(entry.crystals ?? []);
+      const state = { boss: entry.boss, slots, crystals, messageId: entry.messageId, startedAt: entry.startedAt, expireTimer: null, deleteTimer: null };
 
       const scheduleDelete = (delay) => {
         state.deleteTimer = setTimeout(async () => {
@@ -616,7 +645,7 @@ client.once('clientReady', async () => {
         // Past 4h but not 5h — mark expired, schedule delete for remaining time
         try {
           const m = await channel.messages.fetch(entry.messageId);
-          await m.edit({ embeds: [buildCharsEmbed(entry.boss, slots, true)], components: buildCharsComponents(entry.boss, slots, true) });
+          await m.edit({ embeds: [buildCharsEmbed(entry.boss, slots, true, crystals)], components: buildCharsComponents(entry.boss, slots, true) });
         } catch (_) {}
         scheduleDelete(DELETE_MS - elapsed);
       } else {
@@ -626,7 +655,7 @@ client.once('clientReady', async () => {
           charsState.delete(channelId);
           try {
             const m = await channel.messages.fetch(entry.messageId);
-            await m.edit({ embeds: [buildCharsEmbed(entry.boss, slots, true)], components: buildCharsComponents(entry.boss, slots, true) });
+            await m.edit({ embeds: [buildCharsEmbed(entry.boss, slots, true, crystals)], components: buildCharsComponents(entry.boss, slots, true) });
           } catch (_) {}
           scheduleDelete(60 * 60 * 1000);
         }, EXPIRE_MS - elapsed);
@@ -854,7 +883,7 @@ client.on('interactionCreate', async interaction => {
 
         const slots = new Map();
         const startedAt = new Date().toISOString();
-        const state = { boss, slots, messageId: null, startedAt, expireTimer: null, deleteTimer: null };
+        const state = { boss, slots, crystals: new Map(), messageId: null, startedAt, expireTimer: null, deleteTimer: null };
         charsState.set(interaction.channelId, state);
 
         await interaction.reply({
@@ -864,7 +893,7 @@ client.on('interactionCreate', async interaction => {
 
         const msg = await interaction.fetchReply();
         state.messageId = msg.id;
-        charsPersisted[interaction.channelId] = { messageId: msg.id, boss, slots: [], startedAt };
+        charsPersisted[interaction.channelId] = { messageId: msg.id, boss, slots: [], crystals: [], startedAt };
         saveCharsPersisted();
 
         // After 4h: disable buttons and mark expired
@@ -873,7 +902,7 @@ client.on('interactionCreate', async interaction => {
           try {
             const m = await interaction.channel.messages.fetch(state.messageId);
             await m.edit({
-              embeds: [buildCharsEmbed(boss, slots, true)],
+              embeds: [buildCharsEmbed(boss, slots, true, state.crystals)],
               components: buildCharsComponents(boss, slots, true),
             });
           } catch (_) {}
@@ -898,6 +927,28 @@ client.on('interactionCreate', async interaction => {
     }
     if (interaction.isStringSelectMenu() && interaction.customId === 'music_queue_select') {
       await music.handleQueueSelect(interaction); return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === 'chars_crystal_select') {
+      const state = charsState.get(interaction.channelId);
+      if (!state) { await interaction.update({ content: '❌ Roster has expired.', components: [] }); return; }
+      const value = interaction.values[0];
+      if (value === 'clear') {
+        state.crystals.delete(interaction.user.id);
+      } else {
+        const [color, level] = value.split('_');
+        state.crystals.set(interaction.user.id, { color, level: parseInt(level) });
+      }
+      if (charsPersisted[interaction.channelId]) {
+        charsPersisted[interaction.channelId].crystals = [...state.crystals.entries()];
+        saveCharsPersisted();
+      }
+      try {
+        const m = await interaction.channel.messages.fetch(state.messageId);
+        await m.edit({ embeds: [buildCharsEmbed(state.boss, state.slots, false, state.crystals)], components: buildCharsComponents(state.boss, state.slots) });
+      } catch (_) {}
+      await interaction.update({ content: '✅ Crystal updated!', components: [] });
+      return;
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'remove_absence_select') {
@@ -981,7 +1032,7 @@ client.on('interactionCreate', async interaction => {
 
         const state = charsState.get(interaction.channelId);
         await interaction.update({
-          embeds: [buildCharsEmbed(state.boss, state.slots)],
+          embeds: [buildCharsEmbed(state.boss, state.slots, false, state.crystals)],
           components: buildCharsComponents(state.boss, state.slots),
         });
         return;
@@ -1020,6 +1071,22 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+
+      // Crystal button — show select menu
+      if (id === 'chars_crystal') {
+        const state = charsState.get(interaction.channelId);
+        if (!state) { await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral }); return; }
+        const hasSlot = [...state.slots.values()].some(e => e.userId === interaction.user.id);
+        if (!hasSlot) { await interaction.reply({ content: '❌ You need to sign up for a slot first.', flags: MessageFlags.Ephemeral }); return; }
+        await interaction.reply({
+          content: 'Select your crystal:',
+          flags: MessageFlags.Ephemeral,
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('chars_crystal_select').setPlaceholder('Choose crystal…').addOptions(CRYSTAL_OPTIONS)
+          )],
+        });
+        return;
+      }
 
       // Boss options
       if (id === 'back_to_options') {
@@ -1438,6 +1505,27 @@ client.on('messageCreate', async message => {
   // ── Chars chat shortcut ────────────────────────────────────
   const charsSession = charsState.get(message.channelId);
   if (charsSession) {
+    // Crystal input (Zaken only)
+    if (charsSession.boss === 'Zaken') {
+      const crystal = parseCrystalInput(message.content);
+      if (crystal) {
+        const hasSlot = [...charsSession.slots.values()].some(e => e.userId === message.author.id);
+        if (hasSlot) {
+          charsSession.crystals.set(message.author.id, crystal);
+          if (charsPersisted[message.channelId]) {
+            charsPersisted[message.channelId].crystals = [...charsSession.crystals.entries()];
+            saveCharsPersisted();
+          }
+          try { await message.delete(); } catch (_) {}
+          try {
+            const m = await message.channel.messages.fetch(charsSession.messageId);
+            await m.edit({ embeds: [buildCharsEmbed(charsSession.boss, charsSession.slots, false, charsSession.crystals)], components: buildCharsComponents(charsSession.boss, charsSession.slots) });
+          } catch (_) {}
+          return;
+        }
+      }
+    }
+
     const slotNum = parseCharsInput(charsSession.boss, message.content);
 
     if (slotNum !== null) {
@@ -1477,7 +1565,7 @@ client.on('messageCreate', async message => {
         try {
           const m = await message.channel.messages.fetch(charsSession.messageId);
           await m.edit({
-            embeds: [buildCharsEmbed(charsSession.boss, charsSession.slots)],
+            embeds: [buildCharsEmbed(charsSession.boss, charsSession.slots, false, charsSession.crystals)],
             components: buildCharsComponents(charsSession.boss, charsSession.slots),
           });
         } catch (_) {}
