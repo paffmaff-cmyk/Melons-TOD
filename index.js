@@ -947,7 +947,7 @@ client.on('interactionCreate', async interaction => {
         const m = await interaction.channel.messages.fetch(state.messageId);
         await m.edit({ embeds: [buildCharsEmbed(state.boss, state.slots, false, state.crystals)], components: buildCharsComponents(state.boss, state.slots) });
       } catch (_) {}
-      await interaction.update({ content: '✅ Crystal updated!', components: [] });
+      await interaction.update({ content: '✅ Crystal updated!', components: [] }); autoDelete(interaction);
       return;
     }
 
@@ -956,7 +956,7 @@ client.on('interactionCreate', async interaction => {
       const guildAbsences = getAbsences(interaction.guildId);
       const idx = guildAbsences.findIndex(a => a.id === id);
       if (idx === -1) {
-        await interaction.update({ content: '⚠️ Absence not found (already removed?).', components: [] });
+        await interaction.update({ content: '⚠️ Absence not found (already removed?).', components: [] }); autoDelete(interaction);
         return;
       }
       const removed = guildAbsences.splice(idx, 1)[0];
@@ -964,7 +964,7 @@ client.on('interactionCreate', async interaction => {
       const dateStr = removed.type === 'day'
         ? formatAbsenceDate(removed.date)
         : `${formatAbsenceDate(removed.startDate)} → ${formatAbsenceDate(removed.endDate)}`;
-      await interaction.update({ content: `✅ Removed: **${removed.username}** — ${dateStr}`, components: [] });
+      await interaction.update({ content: `✅ Removed: **${removed.username}** — ${dateStr}`, components: [] }); autoDelete(interaction);
       return;
     }
 
@@ -1000,7 +1000,7 @@ client.on('interactionCreate', async interaction => {
         const result      = await applyCharsSlot(interaction.channelId, interaction.user.id, displayName, slotNum);
 
         if (result === 'expired') {
-          await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral }); autoDelete(interaction);
           return;
         }
         if (result === 'taken') {
@@ -1075,9 +1075,9 @@ client.on('interactionCreate', async interaction => {
       // Crystal button — show select menu
       if (id === 'chars_crystal') {
         const state = charsState.get(interaction.channelId);
-        if (!state) { await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral }); return; }
+        if (!state) { await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral }); autoDelete(interaction); return; }
         const hasSlot = [...state.slots.values()].some(e => e.userId === interaction.user.id);
-        if (!hasSlot) { await interaction.reply({ content: '❌ You need to sign up for a slot first.', flags: MessageFlags.Ephemeral }); return; }
+        if (!hasSlot) { await interaction.reply({ content: '❌ You need to sign up for a slot first.', flags: MessageFlags.Ephemeral }); autoDelete(interaction); return; }
         await interaction.reply({
           content: 'Select your crystal:',
           flags: MessageFlags.Ephemeral,
@@ -1085,6 +1085,7 @@ client.on('interactionCreate', async interaction => {
             new StringSelectMenuBuilder().setCustomId('chars_crystal_select').setPlaceholder('Choose crystal…').addOptions(CRYSTAL_OPTIONS)
           )],
         });
+        autoDelete(interaction);
         return;
       }
 
