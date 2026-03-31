@@ -54,6 +54,7 @@ const commands = [
 
   new SlashCommandBuilder().setName('out').setDescription('Report an absence').toJSON(),
   new SlashCommandBuilder().setName('absences').setDescription('Show upcoming absences').toJSON(),
+  new SlashCommandBuilder().setName('remove-absence').setDescription('Remove an absence entry').toJSON(),
 
   new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
 

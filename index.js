@@ -535,6 +535,7 @@ const COMMANDS = [
   new SlashCommandBuilder().setName('todoptions').setDescription('Add, edit or delete bosses from the list').toJSON(),
   new SlashCommandBuilder().setName('out').setDescription('Report an absence').toJSON(),
   new SlashCommandBuilder().setName('absences').setDescription('Show upcoming absences').toJSON(),
+  new SlashCommandBuilder().setName('remove-absence').setDescription('Remove an absence entry').toJSON(),
 
   new SlashCommandBuilder().setName('announce').setDescription('Post an announcement').toJSON(),
 
@@ -798,6 +799,38 @@ client.on('interactionCreate', async interaction => {
         });
         return;
       }
+      // ── /remove-absence ──
+      if (interaction.commandName === 'remove-absence') {
+        if (!isAbsenceChannel(interaction)) {
+          await replyEph(interaction, { content: '❌ This command can only be used in an absences channel.' });
+          return;
+        }
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const list = getAbsences(interaction.guildId)
+          .filter(a => isoToDate(a.type === 'day' ? a.date : a.endDate) >= today)
+          .sort((a, b) =>
+            isoToDate(a.type === 'day' ? a.date : a.startDate) -
+            isoToDate(b.type === 'day' ? b.date : b.startDate)
+          );
+        if (list.length === 0) {
+          await replyEph(interaction, { content: '✅ No absences to remove.' });
+          return;
+        }
+        const options = list.slice(0, 25).map(a => {
+          const dateStr = a.type === 'day'
+            ? formatAbsenceDate(a.date)
+            : `${formatAbsenceDate(a.startDate)} → ${formatAbsenceDate(a.endDate)}`;
+          return { label: `${a.username} — ${dateStr}`, description: a.reason ?? undefined, value: a.id };
+        });
+        await replyEph(interaction, {
+          content: 'Select an absence to remove:',
+          components: [new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('remove_absence_select').setPlaceholder('Choose absence…').addOptions(options)
+          )],
+        });
+        return;
+      }
+
       // ── /chars ──
       if (interaction.commandName === 'chars') {
         const boss = interaction.options.getString('boss');
@@ -860,6 +893,23 @@ client.on('interactionCreate', async interaction => {
     }
     if (interaction.isStringSelectMenu() && interaction.customId === 'music_queue_select') {
       await music.handleQueueSelect(interaction); return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === 'remove_absence_select') {
+      const id = interaction.values[0];
+      const guildAbsences = getAbsences(interaction.guildId);
+      const idx = guildAbsences.findIndex(a => a.id === id);
+      if (idx === -1) {
+        await interaction.update({ content: '⚠️ Absence not found (already removed?).', components: [] });
+        return;
+      }
+      const removed = guildAbsences.splice(idx, 1)[0];
+      saveAbsences();
+      const dateStr = removed.type === 'day'
+        ? formatAbsenceDate(removed.date)
+        : `${formatAbsenceDate(removed.startDate)} → ${formatAbsenceDate(removed.endDate)}`;
+      await interaction.update({ content: `✅ Removed: **${removed.username}** — ${dateStr}`, components: [] });
+      return;
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_boss_edit') {
