@@ -388,10 +388,20 @@ function buildOptionsComponents() {
 }
 
 // ── Chars signup ──────────────────────────────────────────────
-// charsState: channelId → { boss, slots: Map<num, {userId, displayName, overriddenFrom?}>, messageId, expireTimer, deleteTimer }
+// charsState: channelId → { boss, slots: Map<num, {userId, displayName, overriddenFrom?}>, messageId, startedAt, expireTimer, deleteTimer }
 const charsState = new Map();
 // pendingOverrides: userId → { channelId, slotNum, displayName, promptMsgId?, promptDeleteTimer? }
 const pendingOverrides = new Map();
+
+// Persist chars sessions across bot restarts
+const CHARS_PERSIST_FILE = path.join(__dirname, 'chars_state.json');
+let charsPersisted = fs.existsSync(CHARS_PERSIST_FILE)
+  ? (() => { try { return JSON.parse(fs.readFileSync(CHARS_PERSIST_FILE, 'utf8')); } catch { return {}; } })()
+  : {};
+
+function saveCharsPersisted() {
+  fs.writeFileSync(CHARS_PERSIST_FILE, JSON.stringify(charsPersisted, null, 2));
+}
 
 const MAGES_SLOTS = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
 
@@ -494,6 +504,7 @@ async function applyCharsSlot(channelId, userId, displayName, slotNum, override 
 
   if (userCurrentSlot === slotNum) {
     state.slots.delete(slotNum);
+    if (charsPersisted[channelId]) { charsPersisted[channelId].slots = [...state.slots.entries()]; saveCharsPersisted(); }
     return 'removed';
   }
 
@@ -506,6 +517,7 @@ async function applyCharsSlot(channelId, userId, displayName, slotNum, override 
     displayName,
     overriddenFromId: (existing && override) ? existing.userId : undefined,
   });
+  if (charsPersisted[channelId]) { charsPersisted[channelId].slots = [...state.slots.entries()]; saveCharsPersisted(); }
   return 'assigned';
 }
 
@@ -564,9 +576,58 @@ const COMMANDS = [
 // ── Bot ───────────────────────────────────────────────────────
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
 
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
+
+  // Restore or clean up chars sessions that survived a restart
+  const now = Date.now();
+  const EXPIRE_MS = 4 * 60 * 60 * 1000;
+  const DELETE_MS = 5 * 60 * 60 * 1000;
+  for (const [channelId, entry] of Object.entries(charsPersisted)) {
+    const elapsed = now - new Date(entry.startedAt).getTime();
+    let channel;
+    try { channel = await client.channels.fetch(channelId); } catch { delete charsPersisted[channelId]; continue; }
+
+    if (elapsed >= DELETE_MS) {
+      // Past 5h — delete message and remove
+      try { const m = await channel.messages.fetch(entry.messageId); await m.delete(); } catch (_) {}
+      delete charsPersisted[channelId];
+    } else {
+      const slots = new Map(entry.slots ?? []);
+      const state = { boss: entry.boss, slots, messageId: entry.messageId, startedAt: entry.startedAt, expireTimer: null, deleteTimer: null };
+
+      const scheduleDelete = (delay) => {
+        state.deleteTimer = setTimeout(async () => {
+          try { const m = await channel.messages.fetch(entry.messageId); await m.delete(); } catch (_) {}
+          charsState.delete(channelId);
+          delete charsPersisted[channelId];
+          saveCharsPersisted();
+        }, delay);
+      };
+
+      if (elapsed >= EXPIRE_MS) {
+        // Past 4h but not 5h — mark expired, schedule delete for remaining time
+        try {
+          const m = await channel.messages.fetch(entry.messageId);
+          await m.edit({ embeds: [buildCharsEmbed(entry.boss, slots, true)], components: buildCharsComponents(entry.boss, slots, true) });
+        } catch (_) {}
+        scheduleDelete(DELETE_MS - elapsed);
+      } else {
+        // Still active — restore state and schedule both timers
+        charsState.set(channelId, state);
+        state.expireTimer = setTimeout(async () => {
+          charsState.delete(channelId);
+          try {
+            const m = await channel.messages.fetch(entry.messageId);
+            await m.edit({ embeds: [buildCharsEmbed(entry.boss, slots, true)], components: buildCharsComponents(entry.boss, slots, true) });
+          } catch (_) {}
+          scheduleDelete(60 * 60 * 1000);
+        }, EXPIRE_MS - elapsed);
+      }
+    }
+  }
+  saveCharsPersisted();
 });
 
 client.on('guildCreate', async guild => {
@@ -741,19 +802,21 @@ client.on('interactionCreate', async interaction => {
       if (interaction.commandName === 'chars') {
         const boss = interaction.options.getString('boss');
 
-        // Cancel any existing session in this channel
+        // Cancel any existing session in this channel (in-memory or persisted from before restart)
         const old = charsState.get(interaction.channelId);
         if (old) {
           clearTimeout(old.expireTimer);
           clearTimeout(old.deleteTimer);
-          try {
-            const oldMsg = await interaction.channel.messages.fetch(old.messageId);
-            await oldMsg.delete();
-          } catch (_) {}
+          try { const oldMsg = await interaction.channel.messages.fetch(old.messageId); await oldMsg.delete(); } catch (_) {}
+        } else if (charsPersisted[interaction.channelId]) {
+          // Session existed before restart — clean up its orphaned message
+          try { const oldMsg = await interaction.channel.messages.fetch(charsPersisted[interaction.channelId].messageId); await oldMsg.delete(); } catch (_) {}
         }
+        delete charsPersisted[interaction.channelId];
 
         const slots = new Map();
-        const state = { boss, slots, messageId: null, expireTimer: null, deleteTimer: null };
+        const startedAt = new Date().toISOString();
+        const state = { boss, slots, messageId: null, startedAt, expireTimer: null, deleteTimer: null };
         charsState.set(interaction.channelId, state);
 
         await interaction.reply({
@@ -763,6 +826,8 @@ client.on('interactionCreate', async interaction => {
 
         const msg = await interaction.fetchReply();
         state.messageId = msg.id;
+        charsPersisted[interaction.channelId] = { messageId: msg.id, boss, slots: [], startedAt };
+        saveCharsPersisted();
 
         // After 4h: disable buttons and mark expired
         state.expireTimer = setTimeout(async () => {
@@ -780,6 +845,8 @@ client.on('interactionCreate', async interaction => {
               const m = await interaction.channel.messages.fetch(state.messageId);
               await m.delete();
             } catch (_) {}
+            delete charsPersisted[interaction.channelId];
+            saveCharsPersisted();
           }, 60 * 60 * 1000);
         }, 4 * 60 * 60 * 1000);
 
