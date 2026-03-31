@@ -25,15 +25,36 @@ function findBoss(name) {
   return BOSSES.find(b => b.name.toLowerCase() === name.toLowerCase());
 }
 
-// ── Absence data ──────────────────────────────────────────────
+// ── Absence data (per-guild) ───────────────────────────────────
 const ABSENCES_FILE = path.join(__dirname, 'absences.json');
-let absences = fs.existsSync(ABSENCES_FILE)
-  ? JSON.parse(fs.readFileSync(ABSENCES_FILE, 'utf8'))
-  : [];
+// Format: { [guildId]: [ ...entries ] }
+let absencesDB = fs.existsSync(ABSENCES_FILE)
+  ? (() => { const d = JSON.parse(fs.readFileSync(ABSENCES_FILE, 'utf8')); return Array.isArray(d) ? {} : d; })()
+  : {};
+
+function getAbsences(guildId) {
+  if (!absencesDB[guildId]) absencesDB[guildId] = [];
+  return absencesDB[guildId];
+}
 
 function saveAbsences() {
-  fs.writeFileSync(ABSENCES_FILE, JSON.stringify(absences, null, 2));
+  fs.writeFileSync(ABSENCES_FILE, JSON.stringify(absencesDB, null, 2));
 }
+
+function purgePastAbsences() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let changed = false;
+  for (const guildId of Object.keys(absencesDB)) {
+    const before = absencesDB[guildId].length;
+    absencesDB[guildId] = absencesDB[guildId].filter(a => isoToDate(a.type === 'day' ? a.date : a.endDate) >= today);
+    if (absencesDB[guildId].length !== before) changed = true;
+  }
+  if (changed) saveAbsences();
+}
+
+// Purge on startup and daily at midnight
+purgePastAbsences();
+setInterval(purgePastAbsences, 24 * 60 * 60 * 1000);
 
 // ── TOD helpers ───────────────────────────────────────────────
 function discordTime(date, format = 'F') {
@@ -49,12 +70,15 @@ function todayString() {
 }
 
 function parseDate(str) {
-  const year = new Date().getFullYear();
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const year = now.getFullYear();
   const m = str.trim().match(/^(\d{1,2})[\/\-\.](\d{1,2})$/);
   if (!m) return null;
   const month = parseInt(m[1]) - 1, day = parseInt(m[2]);
-  const d = new Date(year, month, day);
+  let d = new Date(year, month, day);
   if (d.getMonth() !== month || d.getDate() !== day) return null;
+  // If the date is in the past, assume the user meant next year
+  if (d < now) d = new Date(year + 1, month, day);
   return d;
 }
 
@@ -304,7 +328,7 @@ function buildAnnouncementEmbeds(data) {
     .setTimestamp(new Date(data.timestamp));
 
   if (hasDate) {
-    embed2.addFields({ name: '📅 Date & Time', value: data.date, inline: false });
+    embed2.addFields({ name: data.date?.includes(':F>') ? '📅 Date & Time' : '📅 Date', value: data.date, inline: false });
   }
   if (hasResponses) {
     if (hasDate) embed2.addFields({ name: '\u200B', value: '\u200B', inline: false });
@@ -684,7 +708,7 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        const upcoming = absences
+        const upcoming = getAbsences(interaction.guildId)
           .filter(a => isoToDate(a.type === 'day' ? a.date : a.endDate) >= today)
           .sort((a, b) =>
             isoToDate(a.type === 'day' ? a.date : a.startDate) -
@@ -1102,7 +1126,8 @@ client.on('interactionCreate', async interaction => {
             });
             return;
           }
-          dateDisplay = `<t:${Math.floor(parsedDate.getTime() / 1000)}:F>`;
+          const hasTime = /\s+\d{1,2}:?\d{2}$/.test(dateStr);
+          dateDisplay = `<t:${Math.floor(parsedDate.getTime() / 1000)}:${hasTime ? 'F' : 'D'}>`;
         }
 
         pendingAnnouncements.delete(interaction.user.id);
@@ -1196,7 +1221,7 @@ client.on('interactionCreate', async interaction => {
           return;
         }
 
-        absences.push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, type: 'day', date: toISO(date), reason, timestamp: new Date().toISOString() });
+        getAbsences(interaction.guildId).push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, type: 'day', date: toISO(date), reason, timestamp: new Date().toISOString() });
         saveAbsences();
 
         await interaction.channel.send({
@@ -1244,7 +1269,7 @@ client.on('interactionCreate', async interaction => {
           return;
         }
 
-        absences.push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, type: 'period', startDate: toISO(startDate), endDate: toISO(endDate), reason, timestamp: new Date().toISOString() });
+        getAbsences(interaction.guildId).push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, type: 'period', startDate: toISO(startDate), endDate: toISO(endDate), reason, timestamp: new Date().toISOString() });
         saveAbsences();
 
         await interaction.channel.send({
