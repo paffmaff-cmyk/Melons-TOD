@@ -1116,9 +1116,20 @@ client.on('interactionCreate', async interaction => {
 
       if (id.startsWith('delete_boss|')) {
         const bossName = id.split('|')[1];
+        const deleted = BOSSES.find(b => b.name === bossName);
         const index = BOSSES.findIndex(b => b.name === bossName);
         if (index !== -1) { BOSSES.splice(index, 1); saveBosses(); }
         await interaction.update({ content: `✅ **${bossName}** deleted.`, embeds: [buildOptionsEmbed()], components: buildOptionsComponents() });
+        const actor = interaction.member?.displayName ?? interaction.user.username;
+        const ch = interaction.channel ?? await client.channels.fetch(interaction.channelId);
+        await ch.send({
+          embeds: [new EmbedBuilder()
+            .setColor(0xED4245)
+            .setTitle('Boss Removed')
+            .setDescription(`**${actor}** removed **${bossName}**${deleted ? `\n**Spawn time:** ${deleted.spawnHours}h\n**Window time:** ${deleted.windowHours}h` : ''}`)
+            .setTimestamp()
+          ],
+        });
         return;
       }
 
@@ -1371,7 +1382,17 @@ client.on('interactionCreate', async interaction => {
         }
         BOSSES.push({ name, spawnHours, windowHours });
         saveBosses();
-        await replyEph(interaction, { content: `✅ **${name}** added! (${spawnHours}h spawn, ${windowHours}h window)` });
+        await interaction.deferUpdate();
+        const actor = interaction.member?.displayName ?? interaction.user.username;
+        const addCh = await client.channels.fetch(interaction.channelId);
+        await addCh.send({
+          embeds: [new EmbedBuilder()
+            .setColor(0x57F287)
+            .setTitle('Boss Added')
+            .setDescription(`**${actor}** added a new boss:\n**Boss name:** ${name}\n**Spawn time:** ${spawnHours}h\n**Window time:** ${windowHours}h`)
+            .setTimestamp()
+          ],
+        });
         return;
       }
 
@@ -1386,8 +1407,26 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         const boss = BOSSES.find(b => b.name === oldName);
+        const oldSpawn  = boss?.spawnHours;
+        const oldWindow = boss?.windowHours;
         if (boss) { boss.name = newName; boss.spawnHours = spawnHours; boss.windowHours = windowHours; saveBosses(); }
-        await replyEph(interaction, { content: `✅ **${oldName}** updated to **${newName}** (${spawnHours}h spawn, ${windowHours}h window)` });
+        await interaction.deferUpdate();
+        const actor = interaction.member?.displayName ?? interaction.user.username;
+        const lines = [];
+        if (oldName !== newName)       lines.push(`**Boss name:** ${oldName} → ${newName}`);
+        if (oldSpawn  !== spawnHours)  lines.push(`**Spawn time:** ${oldSpawn}h → ${spawnHours}h`);
+        if (oldWindow !== windowHours) lines.push(`**Window time:** ${oldWindow}h → ${windowHours}h`);
+        if (lines.length > 0) {
+          const editCh = await client.channels.fetch(interaction.channelId);
+          await editCh.send({
+            embeds: [new EmbedBuilder()
+              .setColor(0xFEE75C)
+              .setTitle('Boss Updated')
+              .setDescription(`**${actor}** updated **${oldName !== newName ? `${oldName} → ${newName}` : newName}**:\n${lines.join('\n')}`)
+              .setTimestamp()
+            ],
+          });
+        }
         return;
       }
 
