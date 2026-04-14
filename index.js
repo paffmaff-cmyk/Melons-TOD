@@ -33,7 +33,7 @@ let absencesDB = fs.existsSync(ABSENCES_FILE)
   : {};
 
 function getAbsences(guildId) {
-  if (!absencesDB[guildId]) absencesDB[guildId] = [];
+  if (!Array.isArray(absencesDB[guildId])) absencesDB[guildId] = [];
   return absencesDB[guildId];
 }
 
