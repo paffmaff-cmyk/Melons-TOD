@@ -553,7 +553,7 @@ function buildCustomBuilderEmbed(builder) {
       { name: 'Slots', value: `${slots.length} / ${maxSlots}`, inline: true },
       { name: 'Crystals', value: crystalsEnabled ? '✅ Enabled' : '❌ Disabled', inline: true },
     )
-    .setFooter({ text: 'Press class buttons to add • Undo removes last • Accept to post roster' });
+    .setFooter({ text: `Press class buttons to add • Undo removes last • Accept to post roster\n💎 Crystals ON = 20 slots max (1 row used by crystal button) • Crystals OFF = 25 slots max` });
 }
 
 function buildCustomBuilderComponents(builder) {
