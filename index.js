@@ -676,13 +676,13 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName('chars')
-    .setDescription('Open a char signup sheet for a boss')
-    .addStringOption(o => o.setName('boss').setDescription('Which boss').setRequired(true)
+    .setDescription('Open a char signup sheet')
+    .addStringOption(o => o.setName('composition').setDescription('Choose preset or custom').setRequired(true)
       .addChoices(
-        { name: 'Queen Ant',  value: 'Queen Ant'  },
-        { name: 'Zaken',      value: 'Zaken'      },
-        { name: 'Main Mages', value: 'Main Mages' },
-        { name: 'Custom Chars', value: 'Custom'   },
+        { name: 'Queen Ant',    value: 'Queen Ant'  },
+        { name: 'Zaken',        value: 'Zaken'      },
+        { name: 'Main Mages',   value: 'Main Mages' },
+        { name: 'Custom Chars', value: 'Custom'     },
       ))
     .toJSON(),
 ];
@@ -973,7 +973,7 @@ client.on('interactionCreate', async interaction => {
 
       // ── /chars ──
       if (interaction.commandName === 'chars') {
-        const boss = interaction.options.getString('boss');
+        const boss = interaction.options.getString('composition');
 
         // Custom: open ephemeral builder instead of posting directly
         if (boss === 'Custom') {

@@ -69,7 +69,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName('chars')
     .setDescription('Open a char signup sheet')
-    .addStringOption(o => o.setName('boss').setDescription('Choose preset or custom').setRequired(true)
+    .addStringOption(o => o.setName('composition').setDescription('Choose preset or custom').setRequired(true)
       .addChoices(
         { name: 'Queen Ant',    value: 'Queen Ant'  },
         { name: 'Zaken',        value: 'Zaken'      },
