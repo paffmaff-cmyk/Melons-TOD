@@ -506,7 +506,7 @@ function buildCharsEmbed(boss, slots, expired = false, crystals = new Map(), cus
     .setColor(color)
     .setTitle(expired ? `${boss} — Char Signup  ⚠️ EXPIRED` : `${boss} — Char Signup`)
     .setDescription(instructions + lines.join('\n'))
-    .setFooter({ text: expired ? 'This roster has expired. Leader can use /chars to start a new one.' : 'Expires in 4h • Use buttons or type slot number in chat' });
+    .setFooter({ text: expired ? 'This roster has expired. Leader can use /chars to start a new one.' : boss === 'Custom' ? 'Expires in 4h • Use buttons to sign up' : 'Expires in 4h • Use buttons or type slot number in chat' });
 }
 
 function buildCharsComponents(boss, slots, disabled = false, customSlots = undefined, crystalsEnabled = false, sessionKey = null) {
