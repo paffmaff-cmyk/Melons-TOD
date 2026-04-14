@@ -68,13 +68,13 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('chars')
-    .setDescription('Open a char signup sheet for a boss')
-    .addStringOption(o => o.setName('boss').setDescription('Which boss').setRequired(true)
+    .setDescription('Open a char signup sheet')
+    .addStringOption(o => o.setName('boss').setDescription('Choose preset or custom').setRequired(true)
       .addChoices(
-        { name: 'Queen Ant',  value: 'Queen Ant'  },
-        { name: 'Zaken',      value: 'Zaken'      },
-        { name: 'Main Mages', value: 'Main Mages' },
-        { name: 'Custom Chars', value: 'Custom'   },
+        { name: 'Queen Ant',    value: 'Queen Ant'  },
+        { name: 'Zaken',        value: 'Zaken'      },
+        { name: 'Main Mages',   value: 'Main Mages' },
+        { name: 'Custom Chars', value: 'Custom'     },
       ))
     .toJSON(),
 
@@ -101,12 +101,25 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
   try {
-    console.log('Registering slash commands...');
+    // Register global commands
+    console.log('Registering global slash commands...');
     await rest.put(
       Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands },
     );
-    console.log('✅ Slash commands registered successfully!');
+    console.log('✅ Global slash commands registered!');
+
+    // Register guild commands for instant effect on all guilds
+    if (process.env.GUILD_ID) {
+      console.log(`Registering guild commands for GUILD_ID=${process.env.GUILD_ID}...`);
+      await rest.put(
+        Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+        { body: commands },
+      );
+      console.log('✅ Guild slash commands registered (instant)!');
+    } else {
+      console.log('ℹ️  No GUILD_ID in .env — skipping guild command registration.');
+    }
   } catch (error) {
     console.error('❌ Error registering commands:', error);
   }
