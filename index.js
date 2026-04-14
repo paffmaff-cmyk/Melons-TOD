@@ -694,21 +694,20 @@ client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
 
-  // Re-register guild commands on every startup so changes take effect immediately
-  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-  let guilds = [...client.guilds.cache.values()];
-  if (guilds.length === 0) {
-    try { const fetched = await client.guilds.fetch(); guilds = [...fetched.values()]; } catch (_) {}
-  }
-  console.log(`📋 Registering commands for ${guilds.length} guild(s)...`);
-  for (const guild of guilds) {
-    try {
-      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: COMMANDS });
-      console.log(`✅ Commands registered: ${guild.name ?? guild.id}`);
-    } catch (err) {
-      console.error(`❌ Command registration failed for ${guild.name ?? guild.id}:`, err.message);
+  // Re-register guild commands 5s after ready (GUILD_CREATE events populate cache after READY)
+  setTimeout(async () => {
+    const rest   = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    const guilds = [...client.guilds.cache.values()];
+    console.log(`📋 Registering slash commands for ${guilds.length} guild(s)...`);
+    for (const guild of guilds) {
+      try {
+        await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: COMMANDS });
+        console.log(`✅ Commands registered: ${guild.name}`);
+      } catch (err) {
+        console.error(`❌ Command registration failed for ${guild.name}:`, err.message);
+      }
     }
-  }
+  }, 5000);
 
   // Restore or clean up chars sessions that survived a restart
   const now = Date.now();
