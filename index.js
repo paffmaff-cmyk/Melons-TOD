@@ -578,14 +578,39 @@ function buildCustomBuilderComponents(builder) {
   return rows;
 }
 
+// Zaken slots 10+ (WC/CAT/JUDI/PHANTOM/WS/OL) allow one user to fill multiple
+function isMultiSlot(boss, slotNum) {
+  return boss === 'Zaken' && slotNum >= 10;
+}
+
 // Returns 'assigned'|'removed'|'taken'|'expired'
 async function applyCharsSlot(sessionKey, userId, displayName, slotNum, override = false) {
   const state = charsState.get(sessionKey);
   if (!state) return 'expired';
 
+  const multi = isMultiSlot(state.boss, slotNum);
+
+  if (multi) {
+    // Multi-slot: user can hold several of these slots independently
+    const thisEntry = state.slots.get(slotNum);
+    if (thisEntry?.userId === userId) {
+      // Click own slot → leave it
+      state.slots.delete(slotNum);
+      const stillHasSlot = [...state.slots.values()].some(e => e.userId === userId);
+      if (!stillHasSlot) state.crystals?.delete(userId);
+      if (charsPersisted[sessionKey]) { charsPersisted[sessionKey].slots = [...state.slots.entries()]; charsPersisted[sessionKey].crystals = [...(state.crystals?.entries() ?? [])]; saveCharsPersisted(); }
+      return 'removed';
+    }
+    if (thisEntry && !override) return 'taken';
+    state.slots.set(slotNum, { userId, displayName, overriddenFromId: (thisEntry && override) ? thisEntry.userId : undefined });
+    if (charsPersisted[sessionKey]) { charsPersisted[sessionKey].slots = [...state.slots.entries()]; saveCharsPersisted(); }
+    return 'assigned';
+  }
+
+  // Single-slot: user can only occupy one slot at a time
   let userCurrentSlot = null;
   for (const [num, entry] of state.slots.entries()) {
-    if (entry.userId === userId) { userCurrentSlot = num; break; }
+    if (entry.userId === userId && !isMultiSlot(state.boss, num)) { userCurrentSlot = num; break; }
   }
 
   if (userCurrentSlot === slotNum) {
@@ -671,12 +696,17 @@ client.once('clientReady', async () => {
 
   // Re-register guild commands on every startup so changes take effect immediately
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-  for (const guild of client.guilds.cache.values()) {
+  let guilds = [...client.guilds.cache.values()];
+  if (guilds.length === 0) {
+    try { const fetched = await client.guilds.fetch(); guilds = [...fetched.values()]; } catch (_) {}
+  }
+  console.log(`📋 Registering commands for ${guilds.length} guild(s)...`);
+  for (const guild of guilds) {
     try {
       await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: COMMANDS });
-      console.log(`✅ Commands updated for: ${guild.name}`);
+      console.log(`✅ Commands registered: ${guild.name ?? guild.id}`);
     } catch (err) {
-      console.error(`❌ Failed to update commands for ${guild.name}:`, err);
+      console.error(`❌ Command registration failed for ${guild.name ?? guild.id}:`, err.message);
     }
   }
 
