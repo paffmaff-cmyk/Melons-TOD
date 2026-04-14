@@ -74,7 +74,7 @@ const commands = [
         { name: 'Queen Ant',  value: 'Queen Ant'  },
         { name: 'Zaken',      value: 'Zaken'      },
         { name: 'Main Mages', value: 'Main Mages' },
-        { name: 'Custom',     value: 'Custom'     },
+        { name: 'Custom Chars', value: 'Custom'   },
       ))
     .toJSON(),
 

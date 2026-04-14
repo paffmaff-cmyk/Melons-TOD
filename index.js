@@ -663,7 +663,7 @@ const COMMANDS = [
         { name: 'Queen Ant',  value: 'Queen Ant'  },
         { name: 'Zaken',      value: 'Zaken'      },
         { name: 'Main Mages', value: 'Main Mages' },
-        { name: 'Custom',     value: 'Custom'     },
+        { name: 'Custom Chars', value: 'Custom'   },
       ))
     .toJSON(),
 ];
@@ -674,6 +674,17 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
+
+  // Re-register guild commands on every startup so changes take effect immediately
+  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: COMMANDS });
+      console.log(`✅ Commands updated for: ${guild.name}`);
+    } catch (err) {
+      console.error(`❌ Failed to update commands for ${guild.name}:`, err);
+    }
+  }
 
   // Restore or clean up chars sessions that survived a restart
   const now = Date.now();
