@@ -407,8 +407,8 @@ function saveCharsPersisted() {
 }
 
 const MAGES_SLOTS  = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
-const ZAKEN_SLOTS  = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2'];
-const CUSTOM_SLOT_TYPES = ['BP','SWS','BD','SORC','SPS','OL','SE','ARBA','INSPECT','PONY','DOD','CAT','SPECTRAL','WC','DESTR'];
+const ZAKEN_SLOTS  = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2', 'WC', 'CAT', 'JUDI', 'PHANTOM', 'WS', 'OL'];
+const CUSTOM_SLOT_TYPES = ['BP','SWS','BD','SORC','SPS','OL','SE','SPOIL','ARBA','JUDI','PONY','DOD','CAT','PHANTOM','WC','DESTR','WS'];
 
 // pendingCustomBuilders: userId → { slots: string[], crystalsEnabled: bool }
 const pendingCustomBuilders = new Map();
@@ -496,7 +496,7 @@ function buildCharsEmbed(boss, slots, expired = false, crystals = new Map(), cus
     ? 'Type the role name (e.g. `se`, `bd`, `dd1`, `pony`) or its number `1`–`13`, or use the buttons below.'
     : boss === 'Custom'
     ? 'Use the buttons below to sign up for a slot.'
-    : 'Type the slot name (e.g. `da-1`, `slh-8`, `bp-2`) or its number `1`–`9`, or use the buttons below. Type your crystal (e.g. `blue 11`, `b-13`, `green 12`, `r14`) to set it.';
+    : 'Type the slot name (e.g. `da-1`, `slh-8`, `wc`) or its number `1`–`15`, or use the buttons below. Type your crystal (e.g. `blue 11`, `b-13`, `green 12`, `r14`) to set it.';
   const instructions = expired
     ? ''
     : `-# **How to sign up:** ${hint}\n-# Click your own slot again to leave it. If a slot is taken you will be asked to confirm an override.\n\n`;
@@ -560,28 +560,22 @@ function buildCustomBuilderComponents(builder) {
   const { slots, crystalsEnabled } = builder;
   const maxSlots = crystalsEnabled ? 20 : 25;
   const atLimit  = slots.length >= maxSlots;
-  const row1 = new ActionRowBuilder().addComponents(
-    ...CUSTOM_SLOT_TYPES.slice(0, 5).map(t =>
-      new ButtonBuilder().setCustomId(`custom_add|${t}`).setLabel(t).setStyle(ButtonStyle.Secondary).setDisabled(atLimit)
-    )
-  );
-  const row2 = new ActionRowBuilder().addComponents(
-    ...CUSTOM_SLOT_TYPES.slice(5, 10).map(t =>
-      new ButtonBuilder().setCustomId(`custom_add|${t}`).setLabel(t).setStyle(ButtonStyle.Secondary).setDisabled(atLimit)
-    )
-  );
-  const row3 = new ActionRowBuilder().addComponents(
-    ...CUSTOM_SLOT_TYPES.slice(10, 15).map(t =>
-      new ButtonBuilder().setCustomId(`custom_add|${t}`).setLabel(t).setStyle(ButtonStyle.Secondary).setDisabled(atLimit)
-    )
-  );
-  const row4 = new ActionRowBuilder().addComponents(
+  // Build slot-type rows dynamically (5 per row); control row takes the last slot
+  const rows = [];
+  for (let i = 0; i < CUSTOM_SLOT_TYPES.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(
+      ...CUSTOM_SLOT_TYPES.slice(i, i + 5).map(t =>
+        new ButtonBuilder().setCustomId(`custom_add|${t}`).setLabel(t).setStyle(ButtonStyle.Secondary).setDisabled(atLimit)
+      )
+    ));
+  }
+  rows.push(new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('custom_undo').setLabel('↩ Undo').setStyle(ButtonStyle.Secondary).setDisabled(slots.length === 0),
     new ButtonBuilder().setCustomId('custom_crystal_toggle').setLabel(`💎 Crystals: ${crystalsEnabled ? 'ON' : 'OFF'}`).setStyle(crystalsEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('custom_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success).setDisabled(slots.length === 0),
     new ButtonBuilder().setCustomId('custom_cancel').setLabel('❌ Cancel').setStyle(ButtonStyle.Danger),
-  );
-  return [row1, row2, row3, row4];
+  ));
+  return rows;
 }
 
 // Returns 'assigned'|'removed'|'taken'|'expired'
