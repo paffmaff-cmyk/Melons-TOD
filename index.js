@@ -407,8 +407,9 @@ function saveCharsPersisted() {
 }
 
 const MAGES_SLOTS  = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
-const ZAKEN_SLOTS  = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2', 'WC', 'CAT', 'JUDI', 'PHANTOM', 'WS', 'OL'];
-const CUSTOM_SLOT_TYPES = ['BP','SWS','BD','SORC','SPS','OL','SE','SPOIL','ARBA','JUDI','PONY','DOD','CAT','PHANTOM','WC','DESTR','WS'];
+const ZAKEN_SLOTS       = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2', 'WC', 'CAT', 'JUDI', 'PHANTOM', 'WS', 'OL'];
+const HIGH_ZAKEN_SLOTS  = ['WC', 'BD', 'SWS', 'SE', 'BP', 'PONY', 'JUDI', 'DOD1', 'DOD2', 'TYR'];
+const CUSTOM_SLOT_TYPES = ['BP','SWS','BD','SORC','SPS','OL','SE','SPOIL','ARBA','JUDI','PONY','DOD','CAT','PHANTOM','WC','DESTR','TYR','WS'];
 
 // pendingCustomBuilders: userId → { slots: string[], crystalsEnabled: bool }
 const pendingCustomBuilders = new Map();
@@ -437,14 +438,16 @@ function charsSlotCount(boss, customSlots) {
   if (boss === 'Queen Ant')  return 11;
   if (boss === 'Main Mages') return MAGES_SLOTS.length;
   if (boss === 'Custom')     return customSlots ? customSlots.length : 0;
-  return ZAKEN_SLOTS.length; // Zaken
+  if (boss === 'High Zaken') return HIGH_ZAKEN_SLOTS.length;
+  return ZAKEN_SLOTS.length; // Low Zaken
 }
 
 function charsSlotName(boss, slotNum, customSlots) {
   if (boss === 'Queen Ant')  return slotNum <= 9 ? `AQ${slotNum}` : `PK${slotNum - 9}`;
   if (boss === 'Main Mages') return MAGES_SLOTS[slotNum - 1];
   if (boss === 'Custom')     return customSlots ? customSlots[slotNum - 1] : String(slotNum);
-  return ZAKEN_SLOTS[slotNum - 1];
+  if (boss === 'High Zaken') return HIGH_ZAKEN_SLOTS[slotNum - 1];
+  return ZAKEN_SLOTS[slotNum - 1]; // Low Zaken
 }
 
 // Parse a chat message into a slot number (or null).
@@ -464,8 +467,13 @@ function parseCharsInput(boss, text) {
     // By number 1-13
     const m = s.match(/^(\d{1,2})$/);
     if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= MAGES_SLOTS.length) return n; }
+  } else if (boss === 'High Zaken') {
+    const idx = HIGH_ZAKEN_SLOTS.findIndex(n => n.toLowerCase() === s.toLowerCase());
+    if (idx !== -1) return idx + 1;
+    const m = s.match(/^(\d{1,2})$/);
+    if (m) { const n = parseInt(m[1]); if (n >= 1 && n <= HIGH_ZAKEN_SLOTS.length) return n; }
   } else {
-    // By slot name (e.g. da-1, slh-8, bd-7)
+    // Low Zaken — by slot name (e.g. da-1, slh-8, bd-7)
     const idx = ZAKEN_SLOTS.findIndex(n => n.toLowerCase() === s.toLowerCase());
     if (idx !== -1) return idx + 1;
     // By number 1-9
@@ -483,7 +491,7 @@ function buildCharsEmbed(boss, slots, expired = false, crystals = new Map(), cus
     const name  = charsSlotName(boss, i, customSlots);
     if (entry) {
       const override = entry.overriddenFromId ? ` → ~~<@${entry.overriddenFromId}>~~` : '';
-      const crystal  = (boss === 'Zaken' || boss === 'Custom') && crystals.get(entry.userId);
+      const crystal  = (boss === 'Low Zaken' || boss === 'High Zaken' || boss === 'Custom') && crystals.get(entry.userId);
       const crystalStr = crystal ? ` ${CRYSTAL_EMOJI[crystal.color]} **${CRYSTAL_LABEL[crystal.color]}-${crystal.level}**` : '';
       lines.push(`**${name}** — <@${entry.userId}>${override}${crystalStr}`);
     } else {
@@ -496,6 +504,8 @@ function buildCharsEmbed(boss, slots, expired = false, crystals = new Map(), cus
     ? 'Type the role name (e.g. `se`, `bd`, `dd1`, `pony`) or its number `1`–`13`, or use the buttons below.'
     : boss === 'Custom'
     ? 'Use the buttons below to sign up for a slot.'
+    : boss === 'High Zaken'
+    ? 'Type the role name (e.g. `wc`, `bp`, `tyr`) or its number `1`–`10`, or use the buttons below. Type your crystal (e.g. `blue 11`, `b-13`, `green 12`, `r14`) to set it.'
     : 'Type the slot name (e.g. `da-1`, `slh-8`, `wc`) or its number `1`–`15`, or use the buttons below. Type your crystal (e.g. `blue 11`, `b-13`, `green 12`, `r14`) to set it.';
   const instructions = expired
     ? ''
@@ -529,11 +539,11 @@ function buildCharsComponents(boss, slots, disabled = false, customSlots = undef
     // 5 buttons per row
     if (i % 5 === 0 || i === total) { rows.push(row); row = new ActionRowBuilder(); }
   }
-  if (!disabled && (boss === 'Zaken' || (boss === 'Custom' && crystalsEnabled))) {
+  if (!disabled && (boss === 'Low Zaken' || boss === 'High Zaken' || (boss === 'Custom' && crystalsEnabled))) {
     // Embed sessionKey in crystal button for Custom so handler knows which session
     const crystalBtnId = (boss === 'Custom' && sessionKey) ? `chars_crystal|${sessionKey}` : 'chars_crystal';
     rows.push(new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(crystalBtnId).setLabel('💎 Set Crystal').setStyle(ButtonStyle.Primary)
+      new ButtonBuilder().setCustomId(crystalBtnId).setLabel('💎 SET CRYSTAL').setStyle(ButtonStyle.Primary)
     ));
   }
   return rows;
@@ -570,17 +580,17 @@ function buildCustomBuilderComponents(builder) {
     ));
   }
   rows.push(new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('custom_undo').setLabel('↩ Undo').setStyle(ButtonStyle.Secondary).setDisabled(slots.length === 0),
-    new ButtonBuilder().setCustomId('custom_crystal_toggle').setLabel(`💎 Crystals: ${crystalsEnabled ? 'ON' : 'OFF'}`).setStyle(crystalsEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('custom_accept').setLabel('✅ Accept').setStyle(ButtonStyle.Success).setDisabled(slots.length === 0),
-    new ButtonBuilder().setCustomId('custom_cancel').setLabel('❌ Cancel').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('custom_undo').setLabel('↩ UNDO').setStyle(ButtonStyle.Secondary).setDisabled(slots.length === 0),
+    new ButtonBuilder().setCustomId('custom_crystal_toggle').setLabel(`💎 CRYSTALS: ${crystalsEnabled ? 'ON' : 'OFF'}`).setStyle(crystalsEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('custom_accept').setLabel('✅ ACCEPT').setStyle(ButtonStyle.Success).setDisabled(slots.length === 0),
+    new ButtonBuilder().setCustomId('custom_cancel').setLabel('❌ CANCEL').setStyle(ButtonStyle.Danger),
   ));
   return rows;
 }
 
-// Zaken slots 10+ (WC/CAT/JUDI/PHANTOM/WS/OL) allow one user to fill multiple
+// Low Zaken slots 10+ (WC/CAT/JUDI/PHANTOM/WS/OL) allow one user to fill multiple
 function isMultiSlot(boss, slotNum) {
-  return boss === 'Zaken' && slotNum >= 10;
+  return boss === 'Low Zaken' && slotNum >= 10;
 }
 
 // Returns 'assigned'|'removed'|'taken'|'expired'
@@ -680,7 +690,8 @@ const COMMANDS = [
     .addStringOption(o => o.setName('composition').setDescription('Choose preset or custom').setRequired(true)
       .addChoices(
         { name: 'Queen Ant',    value: 'Queen Ant'  },
-        { name: 'Zaken',        value: 'Zaken'      },
+        { name: 'Low Zaken',    value: 'Low Zaken'  },
+        { name: 'High Zaken',   value: 'High Zaken' },
         { name: 'Main Mages',   value: 'Main Mages' },
         { name: 'Custom Chars', value: 'Custom'     },
       ))
@@ -1766,7 +1777,7 @@ client.on('messageCreate', async message => {
   if (charsSession && charsSession.boss !== 'Custom') {
     const sessionKey = message.channelId;
     // Crystal input (Zaken only)
-    if (charsSession.boss === 'Zaken') {
+    if (charsSession.boss === 'Low Zaken' || charsSession.boss === 'High Zaken') {
       const crystal = parseCrystalInput(message.content);
       if (crystal) {
         const hasSlot = [...charsSession.slots.values()].some(e => e.userId === message.author.id);
