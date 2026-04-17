@@ -943,11 +943,21 @@ client.on('interactionCreate', async interaction => {
           return;
         }
 
+        // Fetch current roles for all members so the dot reflects live role state
+        const uniqueIds = [...new Set(upcoming.map(a => a.userId))];
+        const memberMap = new Map();
+        await Promise.all(uniqueIds.map(async id => {
+          const m = await interaction.guild.members.fetch(id).catch(() => null);
+          if (m) memberMap.set(id, m);
+        }));
+
         const lines = upcoming.map(a => {
           const dateStr = a.type === 'day'
             ? formatAbsenceDate(a.date)
             : `${formatAbsenceDate(a.startDate)} → ${formatAbsenceDate(a.endDate)}`;
-          return `${a.type === 'day' ? '📅' : '📆'} ${a.colorDot ? a.colorDot + ' ' : ''}**${a.username}** | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
+          const liveMember = memberMap.get(a.userId);
+          const dot = liveMember ? getMemberTimeDot(liveMember) : (a.colorDot ?? '');
+          return `${a.type === 'day' ? '📅' : '📆'} ${dot ? dot + ' ' : ''}**${a.username}** | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
         });
 
         await interaction.reply({
