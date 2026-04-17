@@ -16,7 +16,8 @@ const path      = require('path');
 const YTDLP_PATH   = path.join(__dirname, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 const STATE_FILE   = path.join(__dirname, 'music_state.json');
 const HISTORY_FILE = path.join(__dirname, 'music_history.json');
-const IDLE_TIMEOUT = 2 * 60 * 1000;
+const IDLE_TIMEOUT    = 2 * 60 * 1000;
+const DEFAULT_VOLUME  = 0.05; // 5% — change here to adjust for all audio sources
 
 // ── yt-dlp bootstrap ──────────────────────────────────────────
 
@@ -332,7 +333,7 @@ function createYtDlpResource(url) {
 
     ffmpeg.stdout.once('readable', () => {
       const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
-      resource.volume?.setVolume(0.05);
+      resource.volume?.setVolume(DEFAULT_VOLUME);
       resolve(resource);
     });
     ffmpeg.stdout.on('error', () => {});
@@ -346,7 +347,7 @@ async function createStreamResource(url, provider) {
   if (provider === 'soundcloud') {
     const stream = await play.stream(url);
     const resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: true });
-    resource.volume?.setVolume(0.05);
+    resource.volume?.setVolume(DEFAULT_VOLUME);
     return resource;
   }
   return createYtDlpResource(url);
@@ -370,7 +371,7 @@ function createRadioResource(url) {
     });
     ffmpeg.stdout.once('readable', () => {
       const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
-      resource.volume?.setVolume(0.05);
+      resource.volume?.setVolume(DEFAULT_VOLUME);
       done(resolve, resource);
     });
     ffmpeg.on('error', err => done(reject, err));
