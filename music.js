@@ -332,7 +332,7 @@ function createYtDlpResource(url) {
 
     ffmpeg.stdout.once('readable', () => {
       const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
-      resource.volume?.setVolume(0.1);
+      resource.volume?.setVolume(0.05);
       resolve(resource);
     });
     ffmpeg.stdout.on('error', () => {});
@@ -346,7 +346,7 @@ async function createStreamResource(url, provider) {
   if (provider === 'soundcloud') {
     const stream = await play.stream(url);
     const resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: true });
-    resource.volume?.setVolume(0.1);
+    resource.volume?.setVolume(0.05);
     return resource;
   }
   return createYtDlpResource(url);
@@ -370,7 +370,7 @@ function createRadioResource(url) {
     });
     ffmpeg.stdout.once('readable', () => {
       const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
-      resource.volume?.setVolume(0.1);
+      resource.volume?.setVolume(0.05);
       done(resolve, resource);
     });
     ffmpeg.on('error', err => done(reject, err));
