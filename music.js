@@ -495,6 +495,8 @@ function buildSearchComponents(results) {
 function autoDelete(interaction, ms = 8000) {
   setTimeout(() => interaction.deleteReply().catch(() => {}), ms);
 }
+const DEL_PLAY   = 2 * 60 * 1000; // 2 min — play/radio confirmations & errors
+const DEL_SEARCH = 5 * 60 * 1000; // 5 min — search result picker
 
 // ── Session helpers ───────────────────────────────────────────
 
@@ -520,7 +522,7 @@ async function handlePlay(interaction) {
 
   if (!voiceState?.channel) {
     await interaction.reply({ content: '❌ Join a voice channel first.', flags: 64 });
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
@@ -534,7 +536,7 @@ async function handlePlay(interaction) {
       query = resolved;
     } catch (err) {
       await interaction.editReply(`❌ Could not resolve Spotify link: ${err.message}. Try pasting the song name directly.`);
-      autoDelete(interaction);
+      autoDelete(interaction, DEL_PLAY);
       return;
     }
   }
@@ -546,13 +548,13 @@ async function handlePlay(interaction) {
     results = await play.search(query, { limit: 10, source: { soundcloud: 'tracks' } });
   } catch (err) {
     await interaction.editReply(`❌ Search failed: ${err.message}`);
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
   if (!results.length) {
     await interaction.editReply('❌ No results found.');
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
@@ -562,20 +564,21 @@ async function handlePlay(interaction) {
     embeds: [new EmbedBuilder().setColor(0x1db954).setTitle('🔍 Search Results').setDescription('Select a song to add to the queue:')],
     components: buildSearchComponents(results),
   });
+  autoDelete(interaction, DEL_SEARCH);
 }
 
 async function handleSearchSelect(interaction) {
   const pending = pendingSearches.get(interaction.user.id);
   if (!pending || Date.now() > pending.expires) {
     await interaction.update({ content: '⚠️ Search expired — run `/play` again.', embeds: [], components: [] });
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
   const voiceChannel = interaction.member.voice?.channel;
   if (!voiceChannel) {
     await interaction.update({ content: '❌ Join a voice channel first.', embeds: [], components: [] });
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
@@ -593,7 +596,7 @@ async function handleSearchSelect(interaction) {
   };
 
   await interaction.update({ content: `✅ Added **${track.title}** to the queue.`, embeds: [], components: [] });
-  autoDelete(interaction);
+  autoDelete(interaction, DEL_PLAY);
 
   const { session, isNew } = getOrCreateSession(interaction.guildId);
   await session.resolveListMessage(interaction.guild);
@@ -738,12 +741,14 @@ async function handleRadio(interaction) {
   const station     = radioStations.find(s => s.name.toLowerCase() === stationName.toLowerCase());
   if (!station) {
     await interaction.reply({ content: `❌ Station **${stationName}** not found.`, flags: 64 });
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
   const voiceChannel = interaction.member.voice?.channel;
   if (!voiceChannel) {
     await interaction.reply({ content: '❌ Join a voice channel first.', flags: 64 });
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
 
@@ -759,6 +764,7 @@ async function handleRadio(interaction) {
   try {
     await session.startFrom(0, voiceChannel);
     await interaction.editReply({ content: '✅ Tuning in…', flags: 64 });
+    autoDelete(interaction, DEL_PLAY);
     // Send visible now-playing message with stop button
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('radio_stop').setLabel('⏹ Stop Radio').setStyle(ButtonStyle.Danger)
@@ -770,6 +776,7 @@ async function handleRadio(interaction) {
   } catch (err) {
     sessions.delete(interaction.guildId);
     await interaction.editReply({ content: `❌ ${err.message}` });
+    autoDelete(interaction, DEL_PLAY);
   }
 }
 
