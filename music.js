@@ -331,7 +331,9 @@ function createYtDlpResource(url) {
     ytdlp.stderr.on('data', d => { const m = d.toString(); if (m.includes('ERROR')) console.error('[yt-dlp]', m.trim()); });
 
     ffmpeg.stdout.once('readable', () => {
-      resolve(createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
+      const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
+      resource.volume?.setVolume(0.2);
+      resolve(resource);
     });
     ffmpeg.stdout.on('error', () => {});
 
@@ -343,7 +345,9 @@ function createYtDlpResource(url) {
 async function createStreamResource(url, provider) {
   if (provider === 'soundcloud') {
     const stream = await play.stream(url);
-    return createAudioResource(stream.stream, { inputType: stream.type });
+    const resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: true });
+    resource.volume?.setVolume(0.2);
+    return resource;
   }
   return createYtDlpResource(url);
 }
@@ -365,7 +369,9 @@ function createRadioResource(url) {
       console.error('[Radio ffmpeg]', s.trim());
     });
     ffmpeg.stdout.once('readable', () => {
-      done(resolve, createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
+      const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: true });
+      resource.volume?.setVolume(0.2);
+      done(resolve, resource);
     });
     ffmpeg.on('error', err => done(reject, err));
     ffmpeg.stdout.on('error', () => {});
