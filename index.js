@@ -1787,8 +1787,10 @@ client.on('interactionCreate', async interaction => {
     console.error('Interaction error:', err);
     try {
       const errPayload = { content: '❌ Something went wrong.', flags: MessageFlags.Ephemeral };
-      if (interaction.replied || interaction.deferred) await interaction.followUp(errPayload);
-      else { await interaction.reply(errPayload); autoDelete(interaction); }
+      if (interaction.replied || interaction.deferred) {
+        const msg = await interaction.followUp(errPayload);
+        setTimeout(() => msg.delete().catch(() => {}), 2 * 60 * 1000);
+      } else { await interaction.reply(errPayload); autoDelete(interaction); }
     } catch (_) {}
   }
 });

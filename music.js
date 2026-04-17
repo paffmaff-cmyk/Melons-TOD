@@ -629,12 +629,12 @@ async function handleStop(interaction) {
   const session = sessions.get(interaction.guildId);
   if (!session || !session.playing) {
     await interaction.reply({ content: '❌ Nothing is playing.', flags: 64 });
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
     return;
   }
-  await session.stopPlayback();
   await interaction.reply({ content: '⏹ Stopped. Queue clears in 2 min if nothing plays.', flags: 64 });
-  autoDelete(interaction);
+  autoDelete(interaction, DEL_PLAY);
+  await session.stopPlayback().catch(() => {});
 }
 
 async function handleButton(interaction) {
@@ -644,7 +644,7 @@ async function handleButton(interaction) {
     const session = sessions.get(interaction.guildId);
     if (session) session.radioMessage = null; // prevent _deleteRadioMessage from deleting this message
     await interaction.update({ content: '⏹ Radio stopped.', components: [] });
-    if (session) await session.stopPlayback();
+    if (session) await session.stopPlayback().catch(() => {});
     return;
   }
 
@@ -652,12 +652,12 @@ async function handleButton(interaction) {
     const session = sessions.get(interaction.guildId);
     if (!session || !session.playing) {
       await interaction.reply({ content: '❌ Nothing is playing.', flags: 64 });
-      autoDelete(interaction);
+      autoDelete(interaction, DEL_PLAY);
       return;
     }
-    await session.stopPlayback();
     await interaction.reply({ content: '⏹ Stopped. Queue clears in 2 min if nothing plays.', flags: 64 });
-    autoDelete(interaction);
+    autoDelete(interaction, DEL_PLAY);
+    await session.stopPlayback().catch(() => {});
     return;
   }
 
