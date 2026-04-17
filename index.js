@@ -103,11 +103,14 @@ function isoToDate(iso) {
 
 function getMemberTimeDot(member) {
   if (!member) return '';
+  let hasFull = false, hasPart = false;
   for (const role of member.roles.cache.values()) {
     const name = role.name.trim().toUpperCase();
-    if (name.includes('FULL TIME')) return '🔵';
-    if (name.includes('PART TIME')) return '🟡';
+    if (name.includes('FULL TIME')) hasFull = true;
+    if (name.includes('PART TIME')) hasPart = true;
   }
+  if (hasFull && !hasPart) return '🔵';
+  if (hasPart && !hasFull) return '🟡';
   return '';
 }
 
