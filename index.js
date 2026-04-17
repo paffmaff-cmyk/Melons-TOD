@@ -101,6 +101,16 @@ function isoToDate(iso) {
   return new Date(y, m - 1, d);
 }
 
+function getMemberTimeDot(member) {
+  if (!member) return '';
+  for (const role of member.roles.cache.values()) {
+    const name = role.name.trim().toUpperCase();
+    if (name.includes('FULL TIME')) return '🔵';
+    if (name.includes('PART TIME')) return '🟡';
+  }
+  return '';
+}
+
 const ABSENCE_CHANNELS = ['absence', 'day off', 'vacation', 'not gonna be'];
 function isAbsenceChannel(interaction) {
   const name = interaction.channel?.name?.toLowerCase() ?? '';
@@ -937,7 +947,7 @@ client.on('interactionCreate', async interaction => {
           const dateStr = a.type === 'day'
             ? formatAbsenceDate(a.date)
             : `${formatAbsenceDate(a.startDate)} → ${formatAbsenceDate(a.endDate)}`;
-          return `${a.type === 'day' ? '📅' : '📆'} **${a.username}** | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
+          return `${a.type === 'day' ? '📅' : '📆'} ${a.colorDot ? a.colorDot + ' ' : ''}**${a.username}** | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
         });
 
         await interaction.reply({
@@ -1680,14 +1690,15 @@ client.on('interactionCreate', async interaction => {
           return;
         }
 
-        getAbsences(interaction.guildId).push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, type: 'day', date: toISO(date), reason, timestamp: new Date().toISOString() });
+        const dayDot = getMemberTimeDot(interaction.member);
+        getAbsences(interaction.guildId).push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, colorDot: dayDot, type: 'day', date: toISO(date), reason, timestamp: new Date().toISOString() });
         saveAbsences();
 
         await interaction.channel.send({
           embeds: [new EmbedBuilder()
             .setColor(interaction.member?.displayColor || 0x5865F2).setTitle('📅 Day Off Reported')
             .addFields(
-              { name: 'Who',  value: `${interaction.user}`,         inline: true },
+              { name: 'Who',  value: `${dayDot ? dayDot + ' ' : ''}${interaction.user}`,         inline: true },
               { name: 'Date', value: formatAbsenceDate(toISO(date)), inline: true },
               ...(reason ? [{ name: 'Reason', value: reason, inline: false }] : []),
             )
@@ -1728,14 +1739,15 @@ client.on('interactionCreate', async interaction => {
           return;
         }
 
-        getAbsences(interaction.guildId).push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, type: 'period', startDate: toISO(startDate), endDate: toISO(endDate), reason, timestamp: new Date().toISOString() });
+        const periodDot = getMemberTimeDot(interaction.member);
+        getAbsences(interaction.guildId).push({ id: Date.now().toString(), userId: interaction.user.id, username: interaction.member?.displayName || interaction.user.username, colorDot: periodDot, type: 'period', startDate: toISO(startDate), endDate: toISO(endDate), reason, timestamp: new Date().toISOString() });
         saveAbsences();
 
         await interaction.channel.send({
           embeds: [new EmbedBuilder()
             .setColor(interaction.member?.displayColor || 0xFFA500).setTitle('📆 Absence Period Reported')
             .addFields(
-              { name: 'Who',  value: `${interaction.user}`,                  inline: false },
+              { name: 'Who',  value: `${periodDot ? periodDot + ' ' : ''}${interaction.user}`,                  inline: false },
               { name: 'From', value: formatAbsenceDate(toISO(startDate)),    inline: true  },
               { name: 'To',   value: formatAbsenceDate(toISO(endDate)),      inline: true  },
               ...(reason ? [{ name: 'Reason', value: reason, inline: false }] : []),
