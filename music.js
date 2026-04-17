@@ -520,6 +520,13 @@ async function handlePlay(interaction) {
   let query        = interaction.options.getString('query');
   const voiceState = interaction.member.voice;
 
+  // Dismiss any previous search results still waiting for this user
+  const existingSearch = pendingSearches.get(interaction.user.id);
+  if (existingSearch?.interaction) {
+    existingSearch.interaction.deleteReply().catch(() => {});
+  }
+  pendingSearches.delete(interaction.user.id);
+
   if (!voiceState?.channel) {
     await interaction.reply({ content: '❌ Join a voice channel first.', flags: 64 });
     autoDelete(interaction, DEL_PLAY);
@@ -558,7 +565,7 @@ async function handlePlay(interaction) {
     return;
   }
 
-  pendingSearches.set(interaction.user.id, { results, provider, expires: Date.now() + 60_000 });
+  pendingSearches.set(interaction.user.id, { results, provider, expires: Date.now() + 60_000, interaction });
 
   await interaction.editReply({
     embeds: [new EmbedBuilder().setColor(0x1db954).setTitle('🔍 Search Results').setDescription('Select a song to add to the queue:')],
