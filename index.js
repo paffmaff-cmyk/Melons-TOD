@@ -1685,7 +1685,7 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.channel.send({
           embeds: [new EmbedBuilder()
-            .setColor(0x5865F2).setTitle('📅 Day Off Reported')
+            .setColor(interaction.member?.displayColor || 0x5865F2).setTitle('📅 Day Off Reported')
             .addFields(
               { name: 'Who',  value: `${interaction.user}`,         inline: true },
               { name: 'Date', value: formatAbsenceDate(toISO(date)), inline: true },
@@ -1733,7 +1733,7 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.channel.send({
           embeds: [new EmbedBuilder()
-            .setColor(0xFFA500).setTitle('📆 Absence Period Reported')
+            .setColor(interaction.member?.displayColor || 0xFFA500).setTitle('📆 Absence Period Reported')
             .addFields(
               { name: 'Who',  value: `${interaction.user}`,                  inline: false },
               { name: 'From', value: formatAbsenceDate(toISO(startDate)),    inline: true  },
