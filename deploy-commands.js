@@ -76,6 +76,7 @@ const commands = [
         { name: 'Main Mages',   value: 'Main Mages' },
         { name: 'Custom Chars', value: 'Custom'     },
       ))
+    .addStringOption(o => o.setName('slots').setDescription('Custom only: space-separated slots e.g. bp1 bp2 sorc1 bd1 sws1 (skips builder)').setRequired(false))
     .toJSON(),
 
   new SlashCommandBuilder()

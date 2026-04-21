@@ -424,6 +424,32 @@ const ZAKEN_SLOTS       = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS
 const HIGH_ZAKEN_SLOTS  = ['WC', 'BD', 'SWS', 'SE', 'BP', 'PONY', 'JUDI', 'DOD1', 'DOD2', 'TYR'];
 const CUSTOM_SLOT_TYPES = ['BP','SWS','BD','SORC','SPS','OL','SE','SPOIL','ARBA','JUDI','PONY','DOD','CAT','PHANTOM','WC','DESTR','TYR','WS','SOS','STUN'];
 
+function parseCustomSlots(input) {
+  const typesSorted = [...CUSTOM_SLOT_TYPES].sort((a, b) => b.length - a.length);
+  const slots = [];
+  const invalid = [];
+  for (const token of input.trim().split(/\s+/)) {
+    if (!token) continue;
+    const upper = token.toUpperCase();
+    let matched = false;
+    for (const type of typesSorted) {
+      const m = upper.match(new RegExp(`^${type}(\\d*)$`));
+      if (m) {
+        if (m[1]) {
+          slots.push(`${type} ${m[1]}`);
+        } else {
+          const count = slots.filter(s => s.startsWith(type + ' ')).length;
+          slots.push(`${type} ${count + 1}`);
+        }
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) invalid.push(token);
+  }
+  return { slots, invalid };
+}
+
 // pendingCustomBuilders: userId → { slots: string[], crystalsEnabled: bool }
 const pendingCustomBuilders = new Map();
 
@@ -708,6 +734,7 @@ const COMMANDS = [
         { name: 'Main Mages',   value: 'Main Mages' },
         { name: 'Custom Chars', value: 'Custom'     },
       ))
+    .addStringOption(o => o.setName('slots').setDescription('Custom only: space-separated slots e.g. bp1 bp2 sorc1 bd1 sws1 (skips builder)').setRequired(false))
     .toJSON(),
 ];
 
@@ -1009,8 +1036,52 @@ client.on('interactionCreate', async interaction => {
       if (interaction.commandName === 'chars') {
         const boss = interaction.options.getString('composition');
 
-        // Custom: open ephemeral builder instead of posting directly
+        // Custom: fast-path via text slots, or open ephemeral builder
         if (boss === 'Custom') {
+          const slotsInput = interaction.options.getString('slots');
+          if (slotsInput) {
+            const { slots: customSlots, invalid } = parseCustomSlots(slotsInput);
+            if (customSlots.length === 0) {
+              await replyEph(interaction, { content: `❌ No valid slot types found. Valid: ${CUSTOM_SLOT_TYPES.join(', ')}` });
+              return;
+            }
+            const trimmed = customSlots.slice(0, 25);
+            const slots = new Map();
+            const startedAt = new Date().toISOString();
+            const sessionKey = `${interaction.channelId}:${interaction.user.id}`;
+            const state = { boss: 'Custom', slots, crystals: new Map(), messageId: null, startedAt, expireTimer: null, deleteTimer: null, customSlots: trimmed, crystalsEnabled: false };
+            charsState.set(sessionKey, state);
+
+            const note = invalid.length ? `\n⚠️ Skipped unknown: ${invalid.join(', ')}` : '';
+            await replyEph(interaction, { content: `✅ Roster posted!${note}` });
+
+            const msg = await interaction.channel.send({
+              embeds: [buildCharsEmbed('Custom', slots, false, new Map(), trimmed)],
+              components: buildCharsComponents('Custom', slots, false, trimmed, false, sessionKey),
+            });
+            state.messageId = msg.id;
+            messageToSession.set(msg.id, sessionKey);
+
+            charsPersisted[sessionKey] = { messageId: msg.id, boss: 'Custom', slots: [], crystals: [], startedAt, customSlots: trimmed, crystalsEnabled: false, channelId: interaction.channelId };
+            saveCharsPersisted();
+
+            state.expireTimer = setTimeout(async () => {
+              charsState.delete(sessionKey);
+              try {
+                const m = await interaction.channel.messages.fetch(state.messageId);
+                await m.edit({ embeds: [buildCharsEmbed('Custom', state.slots, true, state.crystals, trimmed)], components: buildCharsComponents('Custom', state.slots, true, trimmed, false, sessionKey) });
+              } catch (_) {}
+              state.deleteTimer = setTimeout(async () => {
+                try { const m = await interaction.channel.messages.fetch(state.messageId); await m.delete(); } catch (_) {}
+                messageToSession.delete(state.messageId);
+                delete charsPersisted[sessionKey];
+                saveCharsPersisted();
+              }, 60 * 60 * 1000);
+            }, 4 * 60 * 60 * 1000);
+
+            return;
+          }
+
           pendingCustomBuilders.set(interaction.user.id, { slots: [], crystalsEnabled: false });
           const builder = pendingCustomBuilders.get(interaction.user.id);
           await replyEph(interaction, {
