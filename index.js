@@ -735,6 +735,7 @@ const COMMANDS = [
         { name: 'Custom Chars', value: 'Custom'     },
       ))
     .addStringOption(o => o.setName('slots').setDescription('Custom only: space-separated slots e.g. bp1 bp2 sorc1 bd1 sws1 (skips builder)').setRequired(false))
+    .addBooleanOption(o => o.setName('crystals').setDescription('Custom only: enable crystal tracking (limits roster to 20 slots)').setRequired(false))
     .toJSON(),
 ];
 
@@ -1040,16 +1041,18 @@ client.on('interactionCreate', async interaction => {
         if (boss === 'Custom') {
           const slotsInput = interaction.options.getString('slots');
           if (slotsInput) {
+            const crystalsEnabled = interaction.options.getBoolean('crystals') ?? false;
+            const maxSlots = crystalsEnabled ? 20 : 25;
             const { slots: customSlots, invalid } = parseCustomSlots(slotsInput);
             if (customSlots.length === 0) {
               await replyEph(interaction, { content: `❌ No valid slot types found. Valid: ${CUSTOM_SLOT_TYPES.join(', ')}` });
               return;
             }
-            const trimmed = customSlots.slice(0, 25);
+            const trimmed = customSlots.slice(0, maxSlots);
             const slots = new Map();
             const startedAt = new Date().toISOString();
             const sessionKey = `${interaction.channelId}:${interaction.user.id}`;
-            const state = { boss: 'Custom', slots, crystals: new Map(), messageId: null, startedAt, expireTimer: null, deleteTimer: null, customSlots: trimmed, crystalsEnabled: false };
+            const state = { boss: 'Custom', slots, crystals: new Map(), messageId: null, startedAt, expireTimer: null, deleteTimer: null, customSlots: trimmed, crystalsEnabled };
             charsState.set(sessionKey, state);
 
             const note = invalid.length ? `\n⚠️ Skipped unknown: ${invalid.join(', ')}` : '';
@@ -1057,19 +1060,19 @@ client.on('interactionCreate', async interaction => {
 
             const msg = await interaction.channel.send({
               embeds: [buildCharsEmbed('Custom', slots, false, new Map(), trimmed)],
-              components: buildCharsComponents('Custom', slots, false, trimmed, false, sessionKey),
+              components: buildCharsComponents('Custom', slots, false, trimmed, crystalsEnabled, sessionKey),
             });
             state.messageId = msg.id;
             messageToSession.set(msg.id, sessionKey);
 
-            charsPersisted[sessionKey] = { messageId: msg.id, boss: 'Custom', slots: [], crystals: [], startedAt, customSlots: trimmed, crystalsEnabled: false, channelId: interaction.channelId };
+            charsPersisted[sessionKey] = { messageId: msg.id, boss: 'Custom', slots: [], crystals: [], startedAt, customSlots: trimmed, crystalsEnabled, channelId: interaction.channelId };
             saveCharsPersisted();
 
             state.expireTimer = setTimeout(async () => {
               charsState.delete(sessionKey);
               try {
                 const m = await interaction.channel.messages.fetch(state.messageId);
-                await m.edit({ embeds: [buildCharsEmbed('Custom', state.slots, true, state.crystals, trimmed)], components: buildCharsComponents('Custom', state.slots, true, trimmed, false, sessionKey) });
+                await m.edit({ embeds: [buildCharsEmbed('Custom', state.slots, true, state.crystals, trimmed)], components: buildCharsComponents('Custom', state.slots, true, trimmed, crystalsEnabled, sessionKey) });
               } catch (_) {}
               state.deleteTimer = setTimeout(async () => {
                 try { const m = await interaction.channel.messages.fetch(state.messageId); await m.delete(); } catch (_) {}
