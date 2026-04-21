@@ -76,7 +76,7 @@ const commands = [
         { name: 'Main Mages',   value: 'Main Mages' },
         { name: 'Custom Chars', value: 'Custom'     },
       ))
-    .addStringOption(o => o.setName('slots').setDescription('Custom only: space-separated slots e.g. bp1 bp2 sorc1 bd1 sws1 (skips builder)').setRequired(false))
+    .addStringOption(o => o.setName('slots').setDescription('Types: BP SWS BD SORC SPS OL SE SPOIL ARBA JUDI PONY DOD CAT PHANTOM WC DESTR TYR WS SOS STUN').setRequired(false))
     .addBooleanOption(o => o.setName('crystals').setDescription('Custom only: enable crystal tracking (limits roster to 20 slots)').setRequired(false))
     .toJSON(),
 
