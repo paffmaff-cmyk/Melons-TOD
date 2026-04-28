@@ -421,7 +421,7 @@ function saveCharsPersisted() {
 
 const MAGES_SLOTS  = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
 const ZAKEN_SLOTS       = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2', 'WC', 'CAT', 'JUDI', 'PHANTOM', 'WS', 'OL'];
-const HIGH_ZAKEN_SLOTS  = ['WC', 'BD', 'SWS', 'SE', 'BP', 'PONY', 'JUDI', 'DOD1', 'DOD2', 'TYR', 'SOS', 'DOD'];
+const HIGH_ZAKEN_SLOTS  = ['WC', 'BD', 'SWS', 'SE', 'BP', 'PONY', 'JUDI', 'DOD1', 'DOD2', 'TYR', 'SOS'];
 const CUSTOM_SLOT_TYPES = ['BP','SWS','BD','SORC','SPS','OL','SE','SPOIL','ARBA','JUDI','PONY','DOD','CAT','PHANTOM','WC','DESTR','TYR','WS','SOS','STUN'];
 
 function parseCustomSlots(input) {
