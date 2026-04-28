@@ -1059,6 +1059,7 @@ client.on('interactionCreate', async interaction => {
             await replyEph(interaction, { content: `✅ Roster posted!${note}` });
 
             const msg = await interaction.channel.send({
+              content: '@everyone',
               embeds: [buildCharsEmbed('Custom', slots, false, new Map(), trimmed)],
               components: buildCharsComponents('Custom', slots, false, trimmed, crystalsEnabled, sessionKey),
             });
@@ -1112,6 +1113,7 @@ client.on('interactionCreate', async interaction => {
         charsState.set(interaction.channelId, state);
 
         await interaction.reply({
+          content: '@everyone',
           embeds: [buildCharsEmbed(boss, slots)],
           components: buildCharsComponents(boss, slots),
         });
@@ -1360,6 +1362,7 @@ client.on('interactionCreate', async interaction => {
 
         // Post public roster
         const msg = await interaction.channel.send({
+          content: '@everyone',
           embeds: [buildCharsEmbed('Custom', slots, false, new Map(), customSlots)],
           components: buildCharsComponents('Custom', slots, false, customSlots, crystalsEnabled, sessionKey),
         });
