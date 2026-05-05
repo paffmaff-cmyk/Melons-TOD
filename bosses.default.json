@@ -34,4 +34,9 @@
     "spawnHours": 342,
     "windowHours": 4
   },
+  {
+    "name": "Test Boss",
+    "spawnHours": 0.0167,
+    "windowHours": 0.0167
+  }
 ]
