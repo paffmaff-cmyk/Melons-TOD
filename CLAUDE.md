@@ -1,6 +1,6 @@
 # Melon's TOD Bot — Claude Reference
 
-Discord bot for a Lineage 2 gaming guild. Tracks boss respawn timers (Time of Death), manages raid rosters, absences, announcements, and music playback.
+Discord bot for a Lineage 2 gaming guild. Tracks boss respawn timers (Time of Death), manages raid rosters, absences, announcements, music playback, and boss window alerts.
 
 ## Deploy
 ```
@@ -16,8 +16,9 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 | `music.js` | Music module — play/queue/radio/yt-dlp. Required by index.js. |
 | `bosses.js` | Reference file listing default boss definitions (not required by index.js). |
 | `deploy-commands.js` | Registers slash commands with Discord API. Run manually after changes. |
-| `bosses.json` | Live boss data (runtime). Auto-created from `bosses.default.json` if missing. |
-| `bosses.default.json` | Default boss list — fallback/reset source. |
+| `bosses.json` | Live boss data (runtime, gitignored). Auto-created from `bosses.default.json` if missing. |
+| `bosses.default.json` | Default boss list — fallback/reset source. Includes `Test Boss` (0.0167h spawn+window ≈ 1 min, for alert testing). |
+| `boss_alerts.json` | Pending window alerts (runtime, gitignored). Format: `{ "guildId:bossName": { bossName, channelId, windowStart, windowEnd } }` |
 | `absences.json` | Absence records: `{ [guildId]: [...entries] }` |
 | `announcements.json` | Announcement state per guild. |
 | `music_state.json` | Music queue state (runtime, do not edit manually). |
@@ -61,6 +62,13 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 - `pendingRetry` — modal retry with date error
 
 **Boss data** — mutated in-memory (`BOSSES` array), persisted via `saveBosses()` → `bosses.json`
+
+**Boss window alerts** — when `/tod` is recorded, a `setTimeout` fires `@everyone 🔔 **BossName** window has started!` in the same channel when the window opens.
+- Keyed by `guildId:bossName` — each server tracks its own alerts independently
+- Persisted in `boss_alerts.json` and restored on startup via `scheduleAlert()`
+- Fires immediately if window already open (offset ≥ spawnHours); skipped only if window already ended
+- `scheduleAlert(alertKey, bossName, channelId, windowStartMs)` — defined just above `clientReady`
+- If spawn hours change via `/todoptions` after TOD is recorded, re-run `/tod` to reschedule
 
 **Absence data** — `absencesDB[guildId]` array, persisted via `saveAbsences()` → `absences.json`. Past absences auto-purged on startup and daily at midnight.
 
