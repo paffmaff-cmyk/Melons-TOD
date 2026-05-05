@@ -56,6 +56,12 @@ function purgePastAbsences() {
 purgePastAbsences();
 setInterval(purgePastAbsences, 24 * 60 * 60 * 1000);
 
+// ── Boss alert data ───────────────────────────────────────────
+const BOSS_ALERTS_FILE = path.join(__dirname, 'boss_alerts.json');
+let bossAlerts = fs.existsSync(BOSS_ALERTS_FILE) ? JSON.parse(fs.readFileSync(BOSS_ALERTS_FILE, 'utf8')) : {};
+function saveBossAlerts() { fs.writeFileSync(BOSS_ALERTS_FILE, JSON.stringify(bossAlerts, null, 2)); }
+const alertTimers = new Map();
+
 // ── TOD helpers ───────────────────────────────────────────────
 function discordTime(date, format = 'F') {
   return `<t:${Math.floor(date.getTime() / 1000)}:${format}>`;
@@ -742,6 +748,22 @@ const COMMANDS = [
 // ── Bot ───────────────────────────────────────────────────────
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates] });
 
+function scheduleAlert(bossName, channelId, windowStartMs) {
+  if (alertTimers.has(bossName)) clearTimeout(alertTimers.get(bossName));
+  const delayMs = windowStartMs - Date.now();
+  if (delayMs <= 0) return;
+  const timer = setTimeout(async () => {
+    try {
+      const channel = await client.channels.fetch(channelId);
+      await channel.send(`@everyone 🔔 **${bossName}** window has started!`);
+    } catch (e) { console.error(`[Alert] Failed to send alert for ${bossName}:`, e.message); }
+    delete bossAlerts[bossName];
+    alertTimers.delete(bossName);
+    saveBossAlerts();
+  }, delayMs);
+  alertTimers.set(bossName, timer);
+}
+
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
@@ -821,6 +843,15 @@ client.once('clientReady', async () => {
     }
   }
   saveCharsPersisted();
+
+  // Restore boss window alerts
+  for (const [bossName, alert] of Object.entries(bossAlerts)) {
+    const windowStartMs = new Date(alert.windowStart).getTime();
+    if (windowStartMs <= Date.now()) { delete bossAlerts[bossName]; continue; }
+    scheduleAlert(bossName, alert.channelId, windowStartMs);
+    console.log(`[Alert] Restored alert for ${bossName}`);
+  }
+  saveBossAlerts();
 });
 
 client.on('guildCreate', async guild => {
@@ -890,6 +921,13 @@ client.on('interactionCreate', async interaction => {
             .setTimestamp(todTime)
           ],
         });
+
+        // Schedule @everyone alert when window opens
+        if (windowStart.getTime() > Date.now()) {
+          bossAlerts[boss.name] = { channelId: interaction.channelId, windowStart: windowStart.toISOString() };
+          saveBossAlerts();
+          scheduleAlert(boss.name, interaction.channelId, windowStart.getTime());
+        }
         return;
       }
 
