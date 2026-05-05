@@ -1302,11 +1302,13 @@ client.on('interactionCreate', async interaction => {
             )],
           });
           const pending = pendingOverrides.get(interaction.user.id);
-          pending.promptMsgId = notif.id;
-          pending.promptDeleteTimer = setTimeout(async () => {
-            pendingOverrides.delete(interaction.user.id);
-            try { await notif.delete(); } catch (_) {}
-          }, 4 * 60 * 60 * 1000);
+          if (pending) {
+            pending.promptMsgId = notif.id;
+            pending.promptDeleteTimer = setTimeout(async () => {
+              pendingOverrides.delete(interaction.user.id);
+              try { await notif.delete(); } catch (_) {}
+            }, 4 * 60 * 60 * 1000);
+          }
           return;
         }
 
@@ -1970,11 +1972,13 @@ client.on('messageCreate', async message => {
           )],
         });
         const pending = pendingOverrides.get(message.author.id);
-        pending.promptMsgId = notif.id;
-        pending.promptDeleteTimer = setTimeout(async () => {
-          pendingOverrides.delete(message.author.id);
-          try { await notif.delete(); } catch (_) {}
-        }, 4 * 60 * 60 * 1000);
+        if (pending) {
+          pending.promptMsgId = notif.id;
+          pending.promptDeleteTimer = setTimeout(async () => {
+            pendingOverrides.delete(message.author.id);
+            try { await notif.delete(); } catch (_) {}
+          }, 4 * 60 * 60 * 1000);
+        }
         return;
       }
 

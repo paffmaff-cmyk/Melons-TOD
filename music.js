@@ -405,8 +405,9 @@ function buildQueueEmbed(session) {
   for (let i = 0; i < session.queue.length; i++) {
     const t = session.queue[i];
     const isCurrent = i === session.currentIndex;
-    if (isCurrent && session.playing) {
-      lines.push(`▶️ **${t.title}** (${fmt(t.duration)}) — <@${t.requestedBy}>`);
+    if (isCurrent) {
+      const prefix = session.playing ? '▶️' : '⏸';
+      lines.push(`${prefix} **${t.title}** (${fmt(t.duration)}) — <@${t.requestedBy}>`);
     } else if (i > session.currentIndex && lines.length < 12) {
       lines.push(`\`${i + 1}.\` ${t.title} (${fmt(t.duration)}) — <@${t.requestedBy}>`);
     }
