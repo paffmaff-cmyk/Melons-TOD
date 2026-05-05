@@ -750,8 +750,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 function scheduleAlert(alertKey, bossName, channelId, windowStartMs) {
   if (alertTimers.has(alertKey)) clearTimeout(alertTimers.get(alertKey));
-  const delayMs = windowStartMs - Date.now();
-  if (delayMs <= 0) { console.log(`[Alert] Skipped ${bossName} — window already past`); return; }
+  const delayMs = Math.max(0, windowStartMs - Date.now());
   console.log(`[Alert] Scheduled ${bossName} in ${Math.round(delayMs / 1000)}s (channel ${channelId})`);
   const timer = setTimeout(async () => {
     console.log(`[Alert] Firing for ${bossName} in channel ${channelId}`);
@@ -849,9 +848,9 @@ client.once('clientReady', async () => {
 
   // Restore boss window alerts
   for (const [alertKey, alert] of Object.entries(bossAlerts)) {
-    const windowStartMs = new Date(alert.windowStart).getTime();
-    if (windowStartMs <= Date.now()) { delete bossAlerts[alertKey]; continue; }
-    scheduleAlert(alertKey, alert.bossName, alert.channelId, windowStartMs);
+    const windowEndMs = alert.windowEnd ? new Date(alert.windowEnd).getTime() : Infinity;
+    if (windowEndMs <= Date.now()) { delete bossAlerts[alertKey]; continue; }
+    scheduleAlert(alertKey, alert.bossName, alert.channelId, new Date(alert.windowStart).getTime());
     console.log(`[Alert] Restored alert for ${alert.bossName}`);
   }
   saveBossAlerts();
@@ -925,10 +924,10 @@ client.on('interactionCreate', async interaction => {
           ],
         });
 
-        // Schedule @everyone alert when window opens
-        if (windowStart.getTime() > Date.now()) {
+        // Schedule @everyone alert when window opens (skip only if window already ended)
+        if (windowEnd.getTime() > Date.now()) {
           const alertKey = `${interaction.guildId}:${boss.name}`;
-          bossAlerts[alertKey] = { bossName: boss.name, channelId: interaction.channelId, windowStart: windowStart.toISOString() };
+          bossAlerts[alertKey] = { bossName: boss.name, channelId: interaction.channelId, windowStart: windowStart.toISOString(), windowEnd: windowEnd.toISOString() };
           saveBossAlerts();
           scheduleAlert(alertKey, boss.name, interaction.channelId, windowStart.getTime());
         }
