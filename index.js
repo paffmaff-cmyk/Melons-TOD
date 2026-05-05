@@ -751,11 +751,14 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 function scheduleAlert(alertKey, bossName, channelId, windowStartMs) {
   if (alertTimers.has(alertKey)) clearTimeout(alertTimers.get(alertKey));
   const delayMs = windowStartMs - Date.now();
-  if (delayMs <= 0) return;
+  if (delayMs <= 0) { console.log(`[Alert] Skipped ${bossName} — window already past`); return; }
+  console.log(`[Alert] Scheduled ${bossName} in ${Math.round(delayMs / 1000)}s (channel ${channelId})`);
   const timer = setTimeout(async () => {
+    console.log(`[Alert] Firing for ${bossName} in channel ${channelId}`);
     try {
       const channel = await client.channels.fetch(channelId);
-      await channel.send(`@everyone 🔔 **${bossName}** window has started!`);
+      await channel.send({ content: `@everyone 🔔 **${bossName}** window has started!`, allowedMentions: { parse: ['everyone'] } });
+      console.log(`[Alert] Sent for ${bossName}`);
     } catch (e) { console.error(`[Alert] Failed to send alert for ${bossName}:`, e.message); }
     delete bossAlerts[alertKey];
     alertTimers.delete(alertKey);
