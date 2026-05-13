@@ -587,26 +587,23 @@ function buildCharsComponents(boss, slots, disabled = false, customSlots = undef
     // 5 buttons per row
     if (i % 5 === 0 || i === total) { rows.push(row); row = new ActionRowBuilder(); }
   }
-  if (!disabled && (boss === 'Low Zaken' || boss === 'High Zaken' || (boss === 'Custom' && crystalsEnabled))) {
-    // Embed sessionKey in crystal button for Custom so handler knows which session
+  const hasCrystalRow = !disabled && (boss === 'Low Zaken' || boss === 'High Zaken' || (boss === 'Custom' && crystalsEnabled));
+  if (hasCrystalRow) {
     const crystalBtnId = (boss === 'Custom' && sessionKey) ? `chars_crystal|${sessionKey}` : 'chars_crystal';
     rows.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(crystalBtnId).setLabel('💎 SET CRYSTAL').setStyle(ButtonStyle.Primary)
     ));
   }
-  // Edit button for active Custom rosters
-  if (!disabled && boss === 'Custom' && sessionKey) {
+  // Edit button for any active roster that has a sessionKey
+  if (!disabled && sessionKey) {
     const editBtn = new ButtonBuilder().setCustomId(`chars_edit|${sessionKey}`).setLabel('✏️ EDIT ROSTER').setStyle(ButtonStyle.Secondary);
-    if (crystalsEnabled && rows.length > 0) {
-      // Crystal row was just pushed — add edit button alongside it
+    if (hasCrystalRow) {
       rows[rows.length - 1].addComponents(editBtn);
     } else if (rows.length < 5) {
       rows.push(new ActionRowBuilder().addComponents(editBtn));
     } else if (rows[rows.length - 1].components.length < 5) {
-      // Last slot row still has space (e.g. 21–24 slots) — append there
       rows[rows.length - 1].addComponents(editBtn);
     }
-    // 25 slots, no crystals — all rows full, no edit button
   }
   return rows;
 }
@@ -647,6 +644,47 @@ function buildCustomBuilderComponents(builder) {
     new ButtonBuilder().setCustomId('custom_accept').setLabel('✅ ACCEPT').setStyle(ButtonStyle.Success).setDisabled(slots.length === 0),
     new ButtonBuilder().setCustomId('custom_cancel').setLabel('❌ CANCEL').setStyle(ButtonStyle.Danger),
   ));
+  return rows;
+}
+
+function buildPredefinedEditEmbed(boss, slots, customSlots) {
+  const total = charsSlotCount(boss, customSlots);
+  const lines = [];
+  for (let i = 1; i <= total; i++) {
+    const entry = slots.get(i);
+    const name  = charsSlotName(boss, i, customSlots);
+    lines.push(entry ? `**${name}** — ${entry.displayName}` : `**${name}** — *empty*`);
+  }
+  return new EmbedBuilder()
+    .setColor(0xF1C40F)
+    .setTitle(`✏️ Edit Roster — ${boss}`)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Click a red slot to clear it • Done when finished' });
+}
+
+function buildPredefinedEditComponents(boss, slots, sessionKey) {
+  const total = charsSlotCount(boss);
+  const rows  = [];
+  let   row   = new ActionRowBuilder();
+  for (let i = 1; i <= total; i++) {
+    const entry = slots.get(i);
+    const name  = charsSlotName(boss, i);
+    const label = entry ? `${name} — ${entry.displayName.slice(0, 20)}` : name;
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`chars_edit_clear_slot|${i}|${sessionKey}`)
+        .setLabel(label.slice(0, 80))
+        .setStyle(entry ? ButtonStyle.Danger : ButtonStyle.Secondary)
+        .setDisabled(!entry)
+    );
+    if (i % 5 === 0 || i === total) { rows.push(row); row = new ActionRowBuilder(); }
+  }
+  const doneBtn = new ButtonBuilder().setCustomId(`chars_edit_done|${sessionKey}`).setLabel('✅ DONE').setStyle(ButtonStyle.Success);
+  if (rows.length < 5) {
+    rows.push(new ActionRowBuilder().addComponents(doneBtn));
+  } else {
+    rows[rows.length - 1].addComponents(doneBtn);
+  }
   return rows;
 }
 
@@ -1295,7 +1333,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({
           content: '@everyone',
           embeds: [buildCharsEmbed(boss, slots)],
-          components: buildCharsComponents(boss, slots),
+          components: buildCharsComponents(boss, slots, false, undefined, false, interaction.channelId),
         });
 
         const msg = await interaction.fetchReply();
@@ -1581,17 +1619,63 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
-      // ── Custom roster edit buttons ──────────────────────────────
+      // ── Roster edit buttons ──────────────────────────────────────
       if (id.startsWith('chars_edit|')) {
         const sessionKey = id.slice('chars_edit|'.length);
         const state = charsState.get(sessionKey);
         if (!state) { await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral }); autoDelete(interaction); return; }
-        // Initialise editor with keyed copies of current custom slots
-        const editorSlots = (state.customSlots ?? []).map((name, i) => ({ id: `orig_${i}`, name }));
-        pendingCustomEditors.set(interaction.user.id, { sessionKey, slots: editorSlots, crystalsEnabled: state.crystalsEnabled, view: 'add' });
-        const editor = pendingCustomEditors.get(interaction.user.id);
-        await interaction.reply({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey), flags: MessageFlags.Ephemeral });
-        autoDelete(interaction, 15 * 60);
+        if (state.boss === 'Custom') {
+          // Custom: full slot-add/remove editor
+          const editorSlots = (state.customSlots ?? []).map((name, i) => ({ id: `orig_${i}`, name }));
+          pendingCustomEditors.set(interaction.user.id, { sessionKey, slots: editorSlots, crystalsEnabled: state.crystalsEnabled, view: 'add' });
+          const editor = pendingCustomEditors.get(interaction.user.id);
+          await interaction.reply({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey), flags: MessageFlags.Ephemeral });
+          autoDelete(interaction, 15 * 60);
+        } else {
+          // Predefined: slot-clear panel
+          await interaction.reply({ embeds: [buildPredefinedEditEmbed(state.boss, state.slots)], components: buildPredefinedEditComponents(state.boss, state.slots, sessionKey), flags: MessageFlags.Ephemeral });
+          autoDelete(interaction, 15 * 60);
+        }
+        return;
+      }
+
+      if (id.startsWith('chars_edit_clear_slot|')) {
+        const parts = id.split('|');
+        const slotNum    = parseInt(parts[1]);
+        const sessionKey = parts[2];
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        const entry = state.slots.get(slotNum);
+        if (entry) {
+          state.slots.delete(slotNum);
+          // Remove crystal if user no longer holds any slot
+          if (state.crystals) {
+            const stillHasSlot = [...state.slots.values()].some(e => e.userId === entry.userId);
+            if (!stillHasSlot) state.crystals.delete(entry.userId);
+          }
+          if (charsPersisted[sessionKey]) {
+            charsPersisted[sessionKey].slots = [...state.slots.entries()];
+            charsPersisted[sessionKey].crystals = [...(state.crystals?.entries() ?? [])];
+            saveCharsPersisted();
+          }
+          // Refresh the public roster message
+          try {
+            const channelId = charsPersisted[sessionKey]?.channelId ?? sessionKey;
+            const ch = await client.channels.fetch(channelId);
+            const m  = await ch.messages.fetch(state.messageId);
+            await m.edit({
+              embeds: [buildCharsEmbed(state.boss, state.slots, false, state.crystals, state.customSlots)],
+              components: buildCharsComponents(state.boss, state.slots, false, state.customSlots, state.crystalsEnabled, sessionKey),
+            });
+          } catch (_) {}
+        }
+        await interaction.update({ embeds: [buildPredefinedEditEmbed(state.boss, state.slots)], components: buildPredefinedEditComponents(state.boss, state.slots, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_done|')) {
+        await interaction.update({ content: '✅ Done editing.', embeds: [], components: [] });
+        autoDelete(interaction);
         return;
       }
 
