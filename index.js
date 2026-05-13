@@ -9,20 +9,43 @@ const {
   MessageFlags, REST, Routes, SlashCommandBuilder,
 } = require('discord.js');
 
-// ── Boss data ─────────────────────────────────────────────────
+// ── Boss data (per-guild) ─────────────────────────────────────
 const BOSSES_FILE = path.join(__dirname, 'bosses.json');
 const BOSSES_DEFAULT = path.join(__dirname, 'bosses.default.json');
-if (!fs.existsSync(BOSSES_FILE)) fs.copyFileSync(BOSSES_DEFAULT, BOSSES_FILE);
-let BOSSES;
-try { BOSSES = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8')); }
-catch { console.error('[Bot] bosses.json corrupted — restoring from default'); fs.copyFileSync(BOSSES_DEFAULT, BOSSES_FILE); BOSSES = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8')); }
 
-function saveBosses() {
-  fs.writeFileSync(BOSSES_FILE, JSON.stringify(BOSSES, null, 2));
+let bossesByGuild = {};
+let _legacyBosses = null; // set if bosses.json is old flat-array format
+
+if (fs.existsSync(BOSSES_FILE)) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(BOSSES_FILE, 'utf8'));
+    if (Array.isArray(raw)) {
+      _legacyBosses = raw;
+      console.log('[Bosses] Legacy flat format detected — will migrate to per-guild on startup');
+    } else {
+      bossesByGuild = raw;
+    }
+  } catch { console.error('[Bot] bosses.json corrupted — will seed guilds from default'); }
 }
 
-function findBoss(name) {
-  return BOSSES.find(b => b.name.toLowerCase() === name.toLowerCase());
+function getDefaultBosses() {
+  return JSON.parse(fs.readFileSync(BOSSES_DEFAULT, 'utf8'));
+}
+
+function getGuildBosses(guildId) {
+  if (!bossesByGuild[guildId]) {
+    bossesByGuild[guildId] = getDefaultBosses();
+    saveBosses();
+  }
+  return bossesByGuild[guildId];
+}
+
+function saveBosses() {
+  fs.writeFileSync(BOSSES_FILE, JSON.stringify(bossesByGuild, null, 2));
+}
+
+function findBoss(guildId, name) {
+  return getGuildBosses(guildId).find(b => b.name.toLowerCase() === name.toLowerCase());
 }
 
 // ── Absence data (per-guild) ───────────────────────────────────
@@ -394,18 +417,20 @@ const EPIC_ITEMS = [
 ];
 
 // ── Boss options UI ───────────────────────────────────────────
-function buildOptionsEmbed() {
+function buildOptionsEmbed(guildId) {
+  const bosses = getGuildBosses(guildId);
   return new EmbedBuilder()
     .setColor(0x5865F2)
     .setTitle('Boss Options')
-    .setDescription(BOSSES.map(b => `• **${b.name}** — spawn ${b.spawnHours}h | window ${b.windowHours}h`).join('\n'));
+    .setDescription(bosses.map(b => `• **${b.name}** — spawn ${b.spawnHours}h | window ${b.windowHours}h`).join('\n'));
 }
 
-function buildOptionsComponents() {
+function buildOptionsComponents(guildId) {
+  const bosses = getGuildBosses(guildId);
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('select_boss_edit')
     .setPlaceholder('Select a boss to edit or delete...')
-    .addOptions(BOSSES.slice(0, 25).map(b => ({
+    .addOptions(bosses.slice(0, 25).map(b => ({
       label: b.name,
       description: `Spawn: ${b.spawnHours}h | Window: ${b.windowHours}h`,
       value: b.name,
@@ -447,7 +472,7 @@ function parseCustomSlots(input) {
   const typesSorted = [...CUSTOM_SLOT_TYPES].sort((a, b) => b.length - a.length);
   const slots = [];
   const invalid = [];
-  for (const token of input.trim().split(/\s+/)) {
+  for (const token of input.trim().split(/[\s\/]+/)) {
     if (!token) continue;
     const upper = token.toUpperCase();
     let matched = false;
@@ -939,6 +964,17 @@ client.once('clientReady', async () => {
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
     try {
       const botGuilds = await client.guilds.fetch();
+
+      // Migrate legacy flat boss list to every guild
+      if (_legacyBosses) {
+        for (const [guildId] of botGuilds) {
+          if (!bossesByGuild[guildId]) bossesByGuild[guildId] = JSON.parse(JSON.stringify(_legacyBosses));
+        }
+        _legacyBosses = null;
+        saveBosses();
+        console.log('[Bosses] Migrated legacy boss list to all guilds');
+      }
+
       console.log(`📋 Registering slash commands for ${botGuilds.size} guild(s)...`);
       for (const [guildId, guild] of botGuilds) {
         try {
@@ -1025,6 +1061,10 @@ client.on('guildCreate', async guild => {
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
     await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: COMMANDS });
     console.log(`✅ Commands registered for: ${guild.name}`);
+    if (!bossesByGuild[guild.id]) {
+      bossesByGuild[guild.id] = getDefaultBosses();
+      saveBosses();
+    }
   } catch (err) {
     console.error(`❌ Failed to register for ${guild.name}:`, err);
   }
@@ -1037,7 +1077,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isAutocomplete()) {
       if (interaction.commandName === 'radio') { await music.handleRadio(interaction); return; }
       const focused = interaction.options.getFocused().toLowerCase();
-      const choices = BOSSES
+      const choices = getGuildBosses(interaction.guildId)
         .filter(b => b.name.toLowerCase().includes(focused))
         .slice(0, 25)
         .map(b => ({ name: b.name, value: b.name }));
@@ -1055,7 +1095,7 @@ client.on('interactionCreate', async interaction => {
         const whoKilled = interaction.options.getString('who_killed');
         const offset    = interaction.options.getInteger('tod_offset') ?? 0;
 
-        const boss = findBoss(bossName);
+        const boss = findBoss(interaction.guildId, bossName);
         if (!boss) {
           await replyEph(interaction, { content: `❌ Boss **${bossName}** not found. Use \`/bosses\` to see the list.` });
           return;
@@ -1112,7 +1152,7 @@ client.on('interactionCreate', async interaction => {
         const now = Date.now();
         const guildTod = todState[interaction.guildId] ?? {};
 
-        const lines = BOSSES.map(b => {
+        const lines = getGuildBosses(interaction.guildId).map(b => {
           const tod = guildTod[b.name];
           if (!tod) return `⚫ **${b.name}** — spawn ${b.spawnHours}h, window ${b.windowHours}h`;
           const wStart = new Date(tod.windowStart).getTime();
@@ -1163,7 +1203,7 @@ client.on('interactionCreate', async interaction => {
 
       // ── /todoptions ──
       if (interaction.commandName === 'todoptions') {
-        await replyEph(interaction, { embeds: [buildOptionsEmbed()], components: buildOptionsComponents() });
+        await replyEph(interaction, { embeds: [buildOptionsEmbed(interaction.guildId)], components: buildOptionsComponents(interaction.guildId) });
         return;
       }
 
@@ -1425,7 +1465,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_boss_edit') {
-      const boss = findBoss(interaction.values[0]);
+      const boss = findBoss(interaction.guildId, interaction.values[0]);
       await interaction.update({
         embeds: [new EmbedBuilder()
           .setColor(0x5865F2)
@@ -1778,7 +1818,7 @@ client.on('interactionCreate', async interaction => {
 
       // Boss options
       if (id === 'back_to_options') {
-        await interaction.update({ embeds: [buildOptionsEmbed()], components: buildOptionsComponents() });
+        await interaction.update({ embeds: [buildOptionsEmbed(interaction.guildId)], components: buildOptionsComponents(interaction.guildId) });
         return;
       }
 
@@ -1792,7 +1832,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (id.startsWith('edit_boss|')) {
-        const boss = findBoss(id.split('|')[1]);
+        const boss = findBoss(interaction.guildId, id.split('|')[1]);
         await interaction.showModal(new ModalBuilder().setCustomId(`modal_edit_boss|${boss.name}`).setTitle(`Edit ${boss.name}`).addComponents(
           new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('boss_name').setLabel('Boss Name').setStyle(TextInputStyle.Short).setRequired(true).setValue(boss.name)),
           new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('spawn_hours').setLabel('Spawn Time (hours)').setStyle(TextInputStyle.Short).setRequired(true).setValue(String(boss.spawnHours))),
@@ -1803,10 +1843,11 @@ client.on('interactionCreate', async interaction => {
 
       if (id.startsWith('delete_boss|')) {
         const bossName = id.split('|')[1];
-        const deleted = BOSSES.find(b => b.name === bossName);
-        const index = BOSSES.findIndex(b => b.name === bossName);
-        if (index !== -1) { BOSSES.splice(index, 1); saveBosses(); }
-        await interaction.update({ content: `✅ **${bossName}** deleted.`, embeds: [buildOptionsEmbed()], components: buildOptionsComponents() });
+        const guildBosses = getGuildBosses(interaction.guildId);
+        const deleted = guildBosses.find(b => b.name === bossName);
+        const index = guildBosses.findIndex(b => b.name === bossName);
+        if (index !== -1) { guildBosses.splice(index, 1); saveBosses(); }
+        await interaction.update({ content: `✅ **${bossName}** deleted.`, embeds: [buildOptionsEmbed(interaction.guildId)], components: buildOptionsComponents(interaction.guildId) });
         const actor = interaction.member?.displayName ?? interaction.user.username;
         const ch = interaction.channel ?? await client.channels.fetch(interaction.channelId);
         await ch.send({
@@ -2067,7 +2108,7 @@ client.on('interactionCreate', async interaction => {
           await replyEph(interaction, { content: '❌ Spawn time and window must be numbers.' });
           return;
         }
-        BOSSES.push({ name, spawnHours, windowHours });
+        getGuildBosses(interaction.guildId).push({ name, spawnHours, windowHours });
         saveBosses();
         await interaction.deferUpdate();
         const actor = interaction.member?.displayName ?? interaction.user.username;
@@ -2093,7 +2134,7 @@ client.on('interactionCreate', async interaction => {
           await replyEph(interaction, { content: '❌ Spawn time and window must be numbers.' });
           return;
         }
-        const boss = BOSSES.find(b => b.name === oldName);
+        const boss = getGuildBosses(interaction.guildId).find(b => b.name === oldName);
         const oldSpawn  = boss?.spawnHours;
         const oldWindow = boss?.windowHours;
         if (boss) { boss.name = newName; boss.spawnHours = spawnHours; boss.windowHours = windowHours; saveBosses(); }
