@@ -458,6 +458,9 @@ function parseCustomSlots(input) {
 
 // pendingCustomBuilders: userId → { slots: string[], crystalsEnabled: bool }
 const pendingCustomBuilders = new Map();
+// pendingCustomEditors: userId → { sessionKey, slots: [{id, name}], crystalsEnabled, view: 'add'|'remove' }
+// id = 'orig_N' for original slots (N = 0-based index), 'new_X' for added slots
+const pendingCustomEditors = new Map();
 
 const CRYSTAL_EMOJI  = { blue: '🔵', green: '🟢', red: '🔴' };
 const CRYSTAL_LABEL  = { blue: 'B', green: 'G', red: 'R' };
@@ -535,10 +538,10 @@ function buildCharsEmbed(boss, slots, expired = false, crystals = new Map(), cus
     const entry = slots.get(i);
     const name  = charsSlotName(boss, i, customSlots);
     if (entry) {
-      const override = entry.overriddenFromId ? ` → ~~<@${entry.overriddenFromId}>~~` : '';
+      const override = entry.overriddenFromId ? ` → ~~${entry.overriddenFromName ?? `<@${entry.overriddenFromId}>`}~~` : '';
       const crystal  = (boss === 'Low Zaken' || boss === 'High Zaken' || boss === 'Custom') && crystals.get(entry.userId);
       const crystalStr = crystal ? ` ${CRYSTAL_EMOJI[crystal.color]} **${CRYSTAL_LABEL[crystal.color]}-${crystal.level}**` : '';
-      lines.push(`**${name}** — <@${entry.userId}>${override}${crystalStr}`);
+      lines.push(`**${name}** — ${entry.displayName}${override}${crystalStr}`);
     } else {
       lines.push(`**${name}** — *empty*`);
     }
@@ -591,6 +594,20 @@ function buildCharsComponents(boss, slots, disabled = false, customSlots = undef
       new ButtonBuilder().setCustomId(crystalBtnId).setLabel('💎 SET CRYSTAL').setStyle(ButtonStyle.Primary)
     ));
   }
+  // Edit button for active Custom rosters
+  if (!disabled && boss === 'Custom' && sessionKey) {
+    const editBtn = new ButtonBuilder().setCustomId(`chars_edit|${sessionKey}`).setLabel('✏️ EDIT ROSTER').setStyle(ButtonStyle.Secondary);
+    if (crystalsEnabled && rows.length > 0) {
+      // Crystal row was just pushed — add edit button alongside it
+      rows[rows.length - 1].addComponents(editBtn);
+    } else if (rows.length < 5) {
+      rows.push(new ActionRowBuilder().addComponents(editBtn));
+    } else if (rows[rows.length - 1].components.length < 5) {
+      // Last slot row still has space (e.g. 21–24 slots) — append there
+      rows[rows.length - 1].addComponents(editBtn);
+    }
+    // 25 slots, no crystals — all rows full, no edit button
+  }
   return rows;
 }
 
@@ -633,6 +650,125 @@ function buildCustomBuilderComponents(builder) {
   return rows;
 }
 
+function buildCharsEditEmbed(editor, state) {
+  const maxSlots = editor.crystalsEnabled ? 20 : 25;
+  const lines = editor.slots.map((s, i) => {
+    let suffix = ' — *empty*';
+    if (s.id.startsWith('orig_')) {
+      const origSlotNum = parseInt(s.id.slice(5)) + 1;
+      const entry = state.slots.get(origSlotNum);
+      if (entry) suffix = ` — <@${entry.userId}>`;
+    }
+    return `**${i + 1}.** ${s.name}${suffix}`;
+  });
+  const isRemove = editor.view === 'remove';
+  return new EmbedBuilder()
+    .setColor(0xF1C40F)
+    .setTitle(isRemove ? '✏️ Edit Roster — Remove a Slot' : '✏️ Edit Roster')
+    .setDescription(lines.length ? lines.join('\n') : '*No slots yet. Add some below.*')
+    .addFields(
+      { name: 'Slots', value: `${editor.slots.length} / ${maxSlots}`, inline: true },
+      { name: 'Crystals', value: editor.crystalsEnabled ? '✅ Enabled' : '❌ Disabled', inline: true },
+    )
+    .setFooter({ text: isRemove
+      ? 'Select a slot to remove it • Taken slots can be removed (signup will be cleared)'
+      : 'Add slots with class buttons • Remove to pick a slot to delete • Apply to save' });
+}
+
+function buildCharsEditAddComponents(editor, sessionKey) {
+  const maxSlots = editor.crystalsEnabled ? 20 : 25;
+  const atLimit = editor.slots.length >= maxSlots;
+  const hasNew = editor.slots.some(s => !s.id.startsWith('orig_'));
+  const rows = [];
+  for (let i = 0; i < CUSTOM_SLOT_TYPES.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(
+      ...CUSTOM_SLOT_TYPES.slice(i, i + 5).map(t =>
+        new ButtonBuilder().setCustomId(`chars_edit_type|${t}|${sessionKey}`).setLabel(t).setStyle(ButtonStyle.Secondary).setDisabled(atLimit)
+      )
+    ));
+  }
+  rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`chars_edit_undo|${sessionKey}`).setLabel('↩ UNDO').setStyle(ButtonStyle.Secondary).setDisabled(!hasNew),
+    new ButtonBuilder().setCustomId(`chars_edit_remove_view|${sessionKey}`).setLabel('🗑️ REMOVE SLOT').setStyle(ButtonStyle.Danger).setDisabled(editor.slots.length === 0),
+    new ButtonBuilder().setCustomId(`chars_edit_crystal|${sessionKey}`).setLabel(`💎 CRYSTALS: ${editor.crystalsEnabled ? 'ON' : 'OFF'}`).setStyle(editor.crystalsEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`chars_edit_apply|${sessionKey}`).setLabel('✅ APPLY').setStyle(ButtonStyle.Success).setDisabled(editor.slots.length === 0),
+    new ButtonBuilder().setCustomId(`chars_edit_cancel|${sessionKey}`).setLabel('❌ CANCEL').setStyle(ButtonStyle.Danger),
+  ));
+  return rows;
+}
+
+function buildCharsEditRemoveComponents(editor, state, sessionKey) {
+  const options = editor.slots.map((s, i) => {
+    let label = `${i + 1}. ${s.name}`;
+    if (s.id.startsWith('orig_')) {
+      const origSlotNum = parseInt(s.id.slice(5)) + 1;
+      const entry = state.slots.get(origSlotNum);
+      if (entry) label += ` [${entry.displayName}]`;
+    }
+    return { label: label.slice(0, 100), value: s.id };
+  });
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`chars_edit_remove_select|${sessionKey}`)
+        .setPlaceholder('Select a slot to remove...')
+        .addOptions(options)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`chars_edit_back|${sessionKey}`).setLabel('← BACK').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`chars_edit_apply|${sessionKey}`).setLabel('✅ APPLY').setStyle(ButtonStyle.Success).setDisabled(editor.slots.length === 0),
+      new ButtonBuilder().setCustomId(`chars_edit_cancel|${sessionKey}`).setLabel('❌ CANCEL').setStyle(ButtonStyle.Danger),
+    ),
+  ];
+}
+
+function applyCharsEdit(sessionKey, editor) {
+  const state = charsState.get(sessionKey);
+  if (!state) return false;
+
+  const newCustomSlots = editor.slots.map(s => s.name);
+
+  // Build old slot number → new slot number mapping for signup remapping
+  const oldToNew = new Map();
+  editor.slots.forEach((s, newIdx) => {
+    if (s.id.startsWith('orig_')) {
+      const origIdx = parseInt(s.id.slice(5));
+      oldToNew.set(origIdx + 1, newIdx + 1);
+    }
+  });
+
+  // Rebuild signups with new slot numbers; drop signups for removed slots
+  const newSlotsMap = new Map();
+  for (const [oldSlotNum, entry] of state.slots.entries()) {
+    const newSlotNum = oldToNew.get(oldSlotNum);
+    if (newSlotNum !== undefined) newSlotsMap.set(newSlotNum, entry);
+  }
+
+  // Remove crystals for users who no longer have a slot
+  if (state.crystals) {
+    const activeUserIds = new Set([...newSlotsMap.values()].map(e => e.userId));
+    for (const userId of [...state.crystals.keys()]) {
+      if (!activeUserIds.has(userId)) state.crystals.delete(userId);
+    }
+  }
+
+  const wasEnabled = state.crystalsEnabled;
+  state.crystalsEnabled = editor.crystalsEnabled;
+  if (wasEnabled && !editor.crystalsEnabled) state.crystals = new Map();
+
+  state.customSlots = newCustomSlots;
+  state.slots = newSlotsMap;
+
+  if (charsPersisted[sessionKey]) {
+    charsPersisted[sessionKey].customSlots = newCustomSlots;
+    charsPersisted[sessionKey].slots = [...newSlotsMap.entries()];
+    charsPersisted[sessionKey].crystals = [...(state.crystals?.entries() ?? [])];
+    charsPersisted[sessionKey].crystalsEnabled = state.crystalsEnabled;
+    saveCharsPersisted();
+  }
+  return true;
+}
+
 // Low Zaken slots 10+ (WC/CAT/JUDI/PHANTOM/WS/OL) allow one user to fill multiple
 function isMultiSlot(boss, slotNum) {
   return boss === 'Low Zaken' && slotNum >= 10;
@@ -657,7 +793,7 @@ async function applyCharsSlot(sessionKey, userId, displayName, slotNum, override
       return 'removed';
     }
     if (thisEntry && !override) return 'taken';
-    state.slots.set(slotNum, { userId, displayName, overriddenFromId: (thisEntry && override) ? thisEntry.userId : undefined });
+    state.slots.set(slotNum, { userId, displayName, overriddenFromId: (thisEntry && override) ? thisEntry.userId : undefined, overriddenFromName: (thisEntry && override) ? thisEntry.displayName : undefined });
     if (charsPersisted[sessionKey]) { charsPersisted[sessionKey].slots = [...state.slots.entries()]; saveCharsPersisted(); }
     return 'assigned';
   }
@@ -683,6 +819,7 @@ async function applyCharsSlot(sessionKey, userId, displayName, slotNum, override
     userId,
     displayName,
     overriddenFromId: (existing && override) ? existing.userId : undefined,
+    overriddenFromName: (existing && override) ? existing.displayName : undefined,
   });
   if (charsPersisted[sessionKey]) { charsPersisted[sessionKey].slots = [...state.slots.entries()]; saveCharsPersisted(); }
   return 'assigned';
@@ -1220,6 +1357,20 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('chars_edit_remove_select|')) {
+      const sessionKey = interaction.customId.slice('chars_edit_remove_select|'.length);
+      const editor = pendingCustomEditors.get(interaction.user.id);
+      if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+      const state = charsState.get(sessionKey);
+      if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+      const slotId = interaction.values[0];
+      const idx = editor.slots.findIndex(s => s.id === slotId);
+      if (idx !== -1) editor.slots.splice(idx, 1);
+      editor.view = 'add';
+      await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
+      return;
+    }
+
     if (interaction.isStringSelectMenu() && interaction.customId === 'remove_absence_select') {
       const id = interaction.values[0];
       const guildAbsences = getAbsences(interaction.guildId);
@@ -1438,6 +1589,117 @@ client.on('interactionCreate', async interaction => {
       if (id === 'custom_cancel') {
         pendingCustomBuilders.delete(interaction.user.id);
         await interaction.update({ content: '❌ Cancelled.', embeds: [], components: [] });
+        autoDelete(interaction);
+        return;
+      }
+
+      // ── Custom roster edit buttons ──────────────────────────────
+      if (id.startsWith('chars_edit|')) {
+        const sessionKey = id.slice('chars_edit|'.length);
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.reply({ content: '❌ This roster has expired.', flags: MessageFlags.Ephemeral }); autoDelete(interaction); return; }
+        // Initialise editor with keyed copies of current custom slots
+        const editorSlots = (state.customSlots ?? []).map((name, i) => ({ id: `orig_${i}`, name }));
+        pendingCustomEditors.set(interaction.user.id, { sessionKey, slots: editorSlots, crystalsEnabled: state.crystalsEnabled, view: 'add' });
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        await interaction.reply({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey), flags: MessageFlags.Ephemeral });
+        autoDelete(interaction, 15 * 60);
+        return;
+      }
+
+      if (id.startsWith('chars_edit_type|')) {
+        const parts = id.split('|');
+        const type = parts[1];
+        const sessionKey = parts[2];
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        const maxSlots = editor.crystalsEnabled ? 20 : 25;
+        if (editor.slots.length < maxSlots) {
+          const count = editor.slots.filter(s => s.name.startsWith(type + ' ')).length;
+          editor.slots.push({ id: `new_${Date.now()}${Math.random().toString(36).slice(2, 6)}`, name: `${type} ${count + 1}` });
+        }
+        await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_undo|')) {
+        const sessionKey = id.slice('chars_edit_undo|'.length);
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        // Only undo newly added slots (not original ones)
+        const lastNewIdx = editor.slots.map((s, i) => s.id.startsWith('orig_') ? -1 : i).filter(i => i >= 0).pop();
+        if (lastNewIdx !== undefined) editor.slots.splice(lastNewIdx, 1);
+        await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_remove_view|')) {
+        const sessionKey = id.slice('chars_edit_remove_view|'.length);
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        editor.view = 'remove';
+        await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditRemoveComponents(editor, state, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_back|')) {
+        const sessionKey = id.slice('chars_edit_back|'.length);
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        editor.view = 'add';
+        await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_crystal|')) {
+        const sessionKey = id.slice('chars_edit_crystal|'.length);
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        editor.crystalsEnabled = !editor.crystalsEnabled;
+        const maxSlots = editor.crystalsEnabled ? 20 : 25;
+        if (editor.slots.length > maxSlots) editor.slots.length = maxSlots;
+        editor.view = 'add';
+        await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_apply|')) {
+        const sessionKey = id.slice('chars_edit_apply|'.length);
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        pendingCustomEditors.delete(interaction.user.id);
+        const ok = applyCharsEdit(sessionKey, editor);
+        if (!ok) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        // Update the public roster message
+        try {
+          const channelId = charsPersisted[sessionKey]?.channelId ?? sessionKey.split(':')[0];
+          const ch = await client.channels.fetch(channelId);
+          const m  = await ch.messages.fetch(state.messageId);
+          await m.edit({
+            embeds: [buildCharsEmbed('Custom', state.slots, false, state.crystals, state.customSlots)],
+            components: buildCharsComponents('Custom', state.slots, false, state.customSlots, state.crystalsEnabled, sessionKey),
+          });
+        } catch (_) {}
+        await interaction.update({ content: '✅ Roster updated!', embeds: [], components: [] });
+        autoDelete(interaction);
+        return;
+      }
+
+      if (id.startsWith('chars_edit_cancel|')) {
+        const sessionKey = id.slice('chars_edit_cancel|'.length);
+        pendingCustomEditors.delete(interaction.user.id);
+        await interaction.update({ content: '❌ Edit cancelled. No changes made.', embeds: [], components: [] });
         autoDelete(interaction);
         return;
       }
