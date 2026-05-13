@@ -62,6 +62,19 @@ let bossAlerts = fs.existsSync(BOSS_ALERTS_FILE) ? JSON.parse(fs.readFileSync(BO
 function saveBossAlerts() { fs.writeFileSync(BOSS_ALERTS_FILE, JSON.stringify(bossAlerts, null, 2)); }
 const alertTimers = new Map();
 
+// ── TOD state (live window tracking, separate from alerts) ────
+const TOD_STATE_FILE = path.join(__dirname, 'tod_state.json');
+let todState = fs.existsSync(TOD_STATE_FILE) ? JSON.parse(fs.readFileSync(TOD_STATE_FILE, 'utf8')) : {};
+function saveTodState() { fs.writeFileSync(TOD_STATE_FILE, JSON.stringify(todState, null, 2)); }
+function setTodState(guildId, bossName, data) {
+  if (!todState[guildId]) todState[guildId] = {};
+  todState[guildId][bossName] = data;
+  saveTodState();
+}
+function getTodState(guildId, bossName) {
+  return todState[guildId]?.[bossName] ?? null;
+}
+
 // ── TOD helpers ───────────────────────────────────────────────
 function discordTime(date, format = 'F') {
   return `<t:${Math.floor(date.getTime() / 1000)}:${format}>`;
@@ -1075,6 +1088,15 @@ client.on('interactionCreate', async interaction => {
           ],
         });
 
+        // Save TOD state for live /bosses display (independent of alert system)
+        setTodState(interaction.guildId, boss.name, {
+          windowStart: windowStart.toISOString(),
+          windowEnd: windowEnd.toISOString(),
+          killedBy: whoKilled ?? null,
+          dropped: dropped,
+          recordedAt: new Date().toISOString(),
+        });
+
         // Schedule @everyone alert when window opens (skip only if window already ended)
         if (windowEnd.getTime() > Date.now()) {
           const alertKey = `${interaction.guildId}:${boss.name}`;
@@ -1087,12 +1109,26 @@ client.on('interactionCreate', async interaction => {
 
       // ── /bosses ──
       if (interaction.commandName === 'bosses') {
+        const now = Date.now();
+        const guildTod = todState[interaction.guildId] ?? {};
+
+        const lines = BOSSES.map(b => {
+          const tod = guildTod[b.name];
+          if (!tod) return `⚫ **${b.name}** — spawn ${b.spawnHours}h, window ${b.windowHours}h`;
+          const wStart = new Date(tod.windowStart).getTime();
+          const wEnd   = new Date(tod.windowEnd).getTime();
+          const by     = tod.killedBy === 'ally' ? ' (ally)' : tod.killedBy === 'enemy' ? ' (enemy)' : '';
+          if (now < wStart) return `🟡 **${b.name}** — window opens ${discordTime(new Date(wStart), 'R')}${by}`;
+          if (now < wEnd)   return `🟢 **${b.name}** — WINDOW OPEN, closes ${discordTime(new Date(wEnd), 'R')}${by}`;
+          return `⚫ **${b.name}** — window ended ${discordTime(new Date(wEnd), 'R')}${by}`;
+        });
+
         await interaction.reply({
           embeds: [new EmbedBuilder()
             .setColor(0x5865F2)
-            .setTitle('Boss Respawn List')
-            .setDescription(BOSSES.map(b => `• **${b.name}** — spawn in ${b.spawnHours}h, window ${b.windowHours}h`).join('\n'))
-            .setFooter({ text: `Melon's Bot` })
+            .setTitle('Boss Respawn Windows')
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: `🟢 In window  🟡 Upcoming  ⚫ No data / ended` })
           ],
         });
         return;
