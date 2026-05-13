@@ -1394,6 +1394,7 @@ client.on('interactionCreate', async interaction => {
         const total = stats.allyKills + stats.enemyKills + stats.unknownKills;
         const dropPct = total > 0 ? Math.round((stats.drops / total) * 100) : 0;
         await interaction.reply({
+          flags: MessageFlags.Ephemeral,
           embeds: [new EmbedBuilder()
             .setColor(0x5865F2)
             .setTitle(`📊 ${bossName} — Drop Statistics`)
@@ -1413,7 +1414,7 @@ client.on('interactionCreate', async interaction => {
 
       // ── /scandrops ──
       if (interaction.commandName === 'scandrops') {
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const guildBosses = getGuildBosses(interaction.guildId);
         const bossNames = new Map(guildBosses.map(b => [b.name.toLowerCase(), b.name]));
         const newHistory = {};
