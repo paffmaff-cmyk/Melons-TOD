@@ -1292,23 +1292,31 @@ client.on('interactionCreate', async interaction => {
         }));
 
         const hasToday = upcoming.some(isAbsenceActiveToday);
-        const lines = upcoming.map(a => {
-          const isToday = isAbsenceActiveToday(a);
-          const icon    = isToday ? '⚠️' : a.type === 'day' ? '📅' : '📆';
-          const dateStr = a.type === 'day'
+
+        function formatAbsenceLine(a) {
+          const isToday    = isAbsenceActiveToday(a);
+          const icon       = isToday ? '⚠️' : a.type === 'day' ? '📅' : '📆';
+          const dateStr    = a.type === 'day'
             ? formatAbsenceDate(a.date)
             : `${formatAbsenceDate(a.startDate)} → ${formatAbsenceDate(a.endDate)}`;
           const liveMember = memberMap.get(a.userId);
-          const dot = liveMember ? getMemberTimeDot(liveMember) : (a.colorDot ?? '');
-          const todayTag = isToday ? ' **[TODAY]**' : '';
+          const dot        = liveMember ? getMemberTimeDot(liveMember) : (a.colorDot ?? '');
+          const todayTag   = isToday ? ' **[TODAY]**' : '';
           return `${icon} ${dot ? dot + ' ' : ''}**${a.username}**${todayTag} | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
-        });
+        }
+
+        const todayLines  = upcoming.filter(isAbsenceActiveToday).map(formatAbsenceLine);
+        const futureLines = upcoming.filter(a => !isAbsenceActiveToday(a)).map(formatAbsenceLine);
+        const parts = [];
+        if (todayLines.length)  parts.push(todayLines.join('\n'));
+        if (futureLines.length) parts.push(futureLines.join('\n'));
+        const description = parts.join('\n\n');
 
         await interaction.reply({
           embeds: [new EmbedBuilder()
             .setColor(hasToday ? 0xFEE75C : 0x5865F2)
             .setTitle('Upcoming Absences')
-            .setDescription(lines.join('\n'))
+            .setDescription(description)
             .setFooter({ text: "Melon's Bot" })
           ],
         });
