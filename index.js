@@ -86,6 +86,21 @@ function saveBossAlerts() { fs.writeFileSync(BOSS_ALERTS_FILE, JSON.stringify(bo
 const alertTimers      = new Map();
 const closeAlertTimers = new Map();
 
+// ── Drop history (per-guild, per-boss kill/drop stats) ────────
+const DROP_HISTORY_FILE = path.join(__dirname, 'drop_history.json');
+let dropHistory = fs.existsSync(DROP_HISTORY_FILE) ? JSON.parse(fs.readFileSync(DROP_HISTORY_FILE, 'utf8')) : {};
+function saveDropHistory() { fs.writeFileSync(DROP_HISTORY_FILE, JSON.stringify(dropHistory, null, 2)); }
+function recordDrop(guildId, bossName, killedBy, dropped) {
+  if (!dropHistory[guildId]) dropHistory[guildId] = {};
+  if (!dropHistory[guildId][bossName]) dropHistory[guildId][bossName] = { allyKills: 0, enemyKills: 0, unknownKills: 0, drops: 0, noDrops: 0 };
+  const s = dropHistory[guildId][bossName];
+  if (killedBy === 'ally') s.allyKills++;
+  else if (killedBy === 'enemy') s.enemyKills++;
+  else s.unknownKills++;
+  if (dropped) s.drops++; else s.noDrops++;
+  saveDropHistory();
+}
+
 // ── TOD state (live window tracking, separate from alerts) ────
 const TOD_STATE_FILE = path.join(__dirname, 'tod_state.json');
 let todState = fs.existsSync(TOD_STATE_FILE) ? JSON.parse(fs.readFileSync(TOD_STATE_FILE, 'utf8')) : {};
@@ -936,6 +951,17 @@ const COMMANDS = [
     .addStringOption(o => o.setName('slots').setDescription('Types: BP SWS BD SORC SPS OL SE SPOIL ARBA JUDI PONY DOD CAT PHANTOM WC DESTR TYR WS SOS STUN').setRequired(false))
     .addBooleanOption(o => o.setName('crystals').setDescription('Custom only: enable crystal tracking (limits roster to 20 slots)').setRequired(false))
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('drops')
+    .setDescription('Show drop statistics for a boss')
+    .addStringOption(o => o.setName('boss').setDescription('Boss name').setRequired(true).setAutocomplete(true))
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('scandrops')
+    .setDescription('Scan this channel for past TOD records and rebuild drop history')
+    .toJSON(),
 ];
 
 // ── Bot ───────────────────────────────────────────────────────
@@ -1147,6 +1173,9 @@ client.on('interactionCreate', async interaction => {
           ],
         });
 
+        // Record kill/drop for history statistics
+        recordDrop(interaction.guildId, boss.name, whoKilled ?? null, dropped);
+
         // Save TOD state for live /bosses display (independent of alert system)
         setTodState(interaction.guildId, boss.name, {
           windowStart: windowStart.toISOString(),
@@ -1350,6 +1379,96 @@ client.on('interactionCreate', async interaction => {
           components: [new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder().setCustomId('remove_absence_select').setPlaceholder('Choose absence…').addOptions(options)
           )],
+        });
+        return;
+      }
+
+      // ── /drops ──
+      if (interaction.commandName === 'drops') {
+        const bossName = interaction.options.getString('boss');
+        const stats = dropHistory[interaction.guildId]?.[bossName];
+        if (!stats) {
+          await replyEph(interaction, { content: `❌ No recorded kills for **${bossName}** yet. Use \`/tod\` to start tracking, or \`/scandrops\` to import channel history.` });
+          return;
+        }
+        const total = stats.allyKills + stats.enemyKills + stats.unknownKills;
+        const dropPct = total > 0 ? Math.round((stats.drops / total) * 100) : 0;
+        await interaction.reply({
+          embeds: [new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle(`📊 ${bossName} — Drop Statistics`)
+            .addFields(
+              { name: 'Ally kills',    value: String(stats.allyKills),    inline: true },
+              { name: 'Enemy kills',   value: String(stats.enemyKills),   inline: true },
+              { name: 'Unknown',       value: String(stats.unknownKills), inline: true },
+              { name: 'Total kills',   value: String(total),              inline: false },
+              { name: 'Dropped ✅',   value: `${stats.drops} (${dropPct}%)`,            inline: true },
+              { name: 'No drop ❌',   value: `${stats.noDrops} (${100 - dropPct}%)`,    inline: true },
+            )
+            .setFooter({ text: "Melon's Bot" })
+          ],
+        });
+        return;
+      }
+
+      // ── /scandrops ──
+      if (interaction.commandName === 'scandrops') {
+        await interaction.deferReply();
+        const guildBosses = getGuildBosses(interaction.guildId);
+        const bossNames = new Map(guildBosses.map(b => [b.name.toLowerCase(), b.name]));
+        const newHistory = {};
+        let lastId = null;
+        let scanned = 0;
+
+        while (true) {
+          const opts = { limit: 100 };
+          if (lastId) opts.before = lastId;
+          const messages = await interaction.channel.messages.fetch(opts).catch(() => null);
+          if (!messages || messages.size === 0) break;
+
+          for (const msg of messages.values()) {
+            for (const embed of msg.embeds) {
+              const footer = embed.footer?.text ?? '';
+              if (!footer.includes("Melon's Bot") && !footer.includes("Red Alert Bot")) continue;
+              if (!embed.title) continue;
+              const rawName = embed.title.split(' — ')[0].trim();
+              const bossName = bossNames.get(rawName.toLowerCase());
+              if (!bossName) continue;
+              const dropField = embed.fields?.find(f => f.name === 'Drop');
+              if (!dropField) continue;
+              const killedBy = embed.title.includes('Ally') ? 'ally' : embed.title.includes('Enemy') ? 'enemy' : null;
+              const dropped  = dropField.value.includes('Dropped ✅');
+              if (!newHistory[bossName]) newHistory[bossName] = { allyKills: 0, enemyKills: 0, unknownKills: 0, drops: 0, noDrops: 0 };
+              const s = newHistory[bossName];
+              if (killedBy === 'ally') s.allyKills++;
+              else if (killedBy === 'enemy') s.enemyKills++;
+              else s.unknownKills++;
+              if (dropped) s.drops++; else s.noDrops++;
+              scanned++;
+            }
+          }
+          lastId = messages.last()?.id;
+          if (messages.size < 100) break;
+        }
+
+        dropHistory[interaction.guildId] = newHistory;
+        saveDropHistory();
+
+        const bossCount = Object.keys(newHistory).length;
+        await interaction.editReply({
+          embeds: [new EmbedBuilder()
+            .setColor(0x57F287)
+            .setTitle('✅ Drop History Scan Complete')
+            .setDescription(bossCount > 0
+              ? Object.entries(newHistory).map(([name, s]) => {
+                  const total = s.allyKills + s.enemyKills + s.unknownKills;
+                  const pct   = total > 0 ? Math.round((s.drops / total) * 100) : 0;
+                  return `• **${name}** — ${total} kills, ${s.drops} drops (${pct}%)`;
+                }).join('\n')
+              : '*No TOD records found in this channel.*')
+            .addFields({ name: 'Records processed', value: String(scanned), inline: true })
+            .setFooter({ text: "Melon's Bot" })
+          ],
         });
         return;
       }
