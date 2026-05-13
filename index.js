@@ -83,7 +83,8 @@ setInterval(purgePastAbsences, 24 * 60 * 60 * 1000);
 const BOSS_ALERTS_FILE = path.join(__dirname, 'boss_alerts.json');
 let bossAlerts = fs.existsSync(BOSS_ALERTS_FILE) ? JSON.parse(fs.readFileSync(BOSS_ALERTS_FILE, 'utf8')) : {};
 function saveBossAlerts() { fs.writeFileSync(BOSS_ALERTS_FILE, JSON.stringify(bossAlerts, null, 2)); }
-const alertTimers = new Map();
+const alertTimers      = new Map();
+const closeAlertTimers = new Map();
 
 // ── TOD state (live window tracking, separate from alerts) ────
 const TOD_STATE_FILE = path.join(__dirname, 'tod_state.json');
@@ -169,6 +170,9 @@ const waitingForImage     = new Map(); // userId → { channelId, setupInteracti
 
 const pendingRetry = new Map();
 // key: userId, value: { text, dateStr } — stored when modal has a date error
+
+const pendingTodUndos = new Map();
+// key: userId, value: { messageId, channelId, guildId, bossName, alertKey }
 
 function buildAnnounceSetupEmbed(state) {
   const roles = (state.roleIds ?? []);
@@ -585,10 +589,10 @@ function buildCharsEmbed(boss, slots, expired = false, crystals = new Map(), cus
     const entry = slots.get(i);
     const name  = charsSlotName(boss, i, customSlots);
     if (entry) {
-      const override = entry.overriddenFromId ? ` → ~~${entry.overriddenFromName ?? `<@${entry.overriddenFromId}>`}~~` : '';
+      const override = entry.overriddenFromId ? ` → ~~<@${entry.overriddenFromId}>~~` : '';
       const crystal  = (boss === 'Low Zaken' || boss === 'High Zaken' || boss === 'Custom') && crystals.get(entry.userId);
       const crystalStr = crystal ? ` ${CRYSTAL_EMOJI[crystal.color]} **${CRYSTAL_LABEL[crystal.color]}-${crystal.level}**` : '';
-      lines.push(`**${name}** — ${entry.displayName}${override}${crystalStr}`);
+      lines.push(`**${name}** — <@${entry.userId}>${override}${crystalStr}`);
     } else {
       lines.push(`**${name}** — *empty*`);
     }
@@ -621,7 +625,7 @@ function buildCharsComponents(boss, slots, disabled = false, customSlots = undef
   for (let i = 1; i <= total; i++) {
     const entry = slots.get(i);
     const name  = charsSlotName(boss, i, customSlots);
-    const label = entry ? `${name} — ${entry.displayName.slice(0, 20)}` : name;
+    const label = entry ? `${name} — @${entry.displayName}`.slice(0, 80) : name;
     // Custom rosters embed sessionKey in slot button so multi-session routing works
     const slotBtnId = (boss === 'Custom' && sessionKey) ? `chars_slot|${sessionKey}|${i}` : `chars_slot|${i}`;
     row.addComponents(
@@ -955,6 +959,20 @@ function scheduleAlert(alertKey, bossName, channelId, windowStartMs) {
   alertTimers.set(alertKey, timer);
 }
 
+function scheduleCloseAlert(alertKey, bossName, channelId, windowEndMs) {
+  if (closeAlertTimers.has(alertKey)) clearTimeout(closeAlertTimers.get(alertKey));
+  const delayMs = windowEndMs - Date.now();
+  if (delayMs <= 0) return;
+  const timer = setTimeout(async () => {
+    try {
+      const channel = await client.channels.fetch(channelId);
+      await channel.send({ content: `@everyone 🔴 **${bossName}** window has CLOSED!`, allowedMentions: { parse: ['everyone'] } });
+    } catch (e) { console.error(`[CloseAlert] Failed for ${bossName}:`, e.message); }
+    closeAlertTimers.delete(alertKey);
+  }, delayMs);
+  closeAlertTimers.set(alertKey, timer);
+}
+
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
@@ -1051,6 +1069,7 @@ client.once('clientReady', async () => {
     const windowEndMs = alert.windowEnd ? new Date(alert.windowEnd).getTime() : Infinity;
     if (windowEndMs <= Date.now()) { delete bossAlerts[alertKey]; continue; }
     scheduleAlert(alertKey, alert.bossName, alert.channelId, new Date(alert.windowStart).getTime());
+    scheduleCloseAlert(alertKey, alert.bossName, alert.channelId, new Date(alert.windowEnd).getTime());
     console.log(`[Alert] Restored alert for ${alert.bossName}`);
   }
   saveBossAlerts();
@@ -1137,13 +1156,26 @@ client.on('interactionCreate', async interaction => {
           recordedAt: new Date().toISOString(),
         });
 
-        // Schedule @everyone alert when window opens (skip only if window already ended)
+        // Schedule window-open and window-close alerts
+        const alertKey = `${interaction.guildId}:${boss.name}`;
         if (windowEnd.getTime() > Date.now()) {
-          const alertKey = `${interaction.guildId}:${boss.name}`;
           bossAlerts[alertKey] = { bossName: boss.name, channelId: interaction.channelId, windowStart: windowStart.toISOString(), windowEnd: windowEnd.toISOString() };
           saveBossAlerts();
           scheduleAlert(alertKey, boss.name, interaction.channelId, windowStart.getTime());
+          scheduleCloseAlert(alertKey, boss.name, interaction.channelId, windowEnd.getTime());
         }
+
+        // Ephemeral undo button (60s window)
+        const todMsg = await interaction.fetchReply();
+        pendingTodUndos.set(interaction.user.id, { messageId: todMsg.id, channelId: interaction.channelId, guildId: interaction.guildId, bossName: boss.name, alertKey });
+        setTimeout(() => pendingTodUndos.delete(interaction.user.id), 60 * 1000);
+        await interaction.followUp({
+          content: '↩️ Recorded! You have 60s to undo:',
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('tod_undo').setLabel('↩ Undo TOD').setStyle(ButtonStyle.Danger)
+          )],
+          flags: MessageFlags.Ephemeral,
+        });
         return;
       }
 
@@ -1230,12 +1262,21 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         const today = new Date(); today.setHours(0, 0, 0, 0);
+        const todayISO = toISO(today);
+
+        function isAbsenceActiveToday(a) {
+          if (a.type === 'day') return a.date === todayISO;
+          return a.startDate <= todayISO && a.endDate >= todayISO;
+        }
+
         const upcoming = getAbsences(interaction.guildId)
           .filter(a => isoToDate(a.type === 'day' ? a.date : a.endDate) >= today)
-          .sort((a, b) =>
-            isoToDate(a.type === 'day' ? a.date : a.startDate) -
-            isoToDate(b.type === 'day' ? b.date : b.startDate)
-          );
+          .sort((a, b) => {
+            const aToday = isAbsenceActiveToday(a) ? 0 : 1;
+            const bToday = isAbsenceActiveToday(b) ? 0 : 1;
+            if (aToday !== bToday) return aToday - bToday;
+            return isoToDate(a.type === 'day' ? a.date : a.startDate) - isoToDate(b.type === 'day' ? b.date : b.startDate);
+          });
 
         if (upcoming.length === 0) {
           await replyEph(interaction, { content: '✅ No upcoming absences.' });
@@ -1250,18 +1291,22 @@ client.on('interactionCreate', async interaction => {
           if (m) memberMap.set(id, m);
         }));
 
+        const hasToday = upcoming.some(isAbsenceActiveToday);
         const lines = upcoming.map(a => {
+          const isToday = isAbsenceActiveToday(a);
+          const icon    = isToday ? '⚠️' : a.type === 'day' ? '📅' : '📆';
           const dateStr = a.type === 'day'
             ? formatAbsenceDate(a.date)
             : `${formatAbsenceDate(a.startDate)} → ${formatAbsenceDate(a.endDate)}`;
           const liveMember = memberMap.get(a.userId);
           const dot = liveMember ? getMemberTimeDot(liveMember) : (a.colorDot ?? '');
-          return `${a.type === 'day' ? '📅' : '📆'} ${dot ? dot + ' ' : ''}**${a.username}** | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
+          const todayTag = isToday ? ' **[TODAY]**' : '';
+          return `${icon} ${dot ? dot + ' ' : ''}**${a.username}**${todayTag} | ${dateStr}${a.reason ? ` — *${a.reason}*` : ''}`;
         });
 
         await interaction.reply({
           embeds: [new EmbedBuilder()
-            .setColor(0x5865F2)
+            .setColor(hasToday ? 0xFEE75C : 0x5865F2)
             .setTitle('Upcoming Absences')
             .setDescription(lines.join('\n'))
             .setFooter({ text: "Melon's Bot" })
@@ -1485,6 +1530,24 @@ client.on('interactionCreate', async interaction => {
     // ── Buttons ─────────────────────────────────────────────────
     if (interaction.isButton()) {
       const id = interaction.customId;
+
+      // ── TOD undo ──
+      if (id === 'tod_undo') {
+        const undo = pendingTodUndos.get(interaction.user.id);
+        pendingTodUndos.delete(interaction.user.id);
+        if (!undo) {
+          await interaction.update({ content: '⏱️ Undo window has expired.', components: [] });
+          return;
+        }
+        if (alertTimers.has(undo.alertKey))      { clearTimeout(alertTimers.get(undo.alertKey));      alertTimers.delete(undo.alertKey); }
+        if (closeAlertTimers.has(undo.alertKey)) { clearTimeout(closeAlertTimers.get(undo.alertKey)); closeAlertTimers.delete(undo.alertKey); }
+        delete bossAlerts[undo.alertKey]; saveBossAlerts();
+        if (todState[undo.guildId]?.[undo.bossName]) { delete todState[undo.guildId][undo.bossName]; saveTodState(); }
+        try { const ch = await client.channels.fetch(undo.channelId); const msg = await ch.messages.fetch(undo.messageId); await msg.delete(); } catch (_) {}
+        await interaction.update({ content: '✅ TOD undone and message deleted.', components: [] });
+        autoDelete(interaction, 5);
+        return;
+      }
 
       // Music buttons
       if (id.startsWith('music_') || id === 'radio_stop') { await music.handleButton(interaction); return; }
