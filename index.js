@@ -698,28 +698,30 @@ function buildCharsEditAddComponents(editor, sessionKey) {
 }
 
 function buildCharsEditRemoveComponents(editor, state, sessionKey) {
-  const options = editor.slots.map((s, i) => {
+  const rows = [];
+  let row = new ActionRowBuilder();
+  editor.slots.forEach((s, i) => {
     let label = `${i + 1}. ${s.name}`;
     if (s.id.startsWith('orig_')) {
       const origSlotNum = parseInt(s.id.slice(5)) + 1;
       const entry = state.slots.get(origSlotNum);
       if (entry) label += ` [${entry.displayName}]`;
     }
-    return { label: label.slice(0, 100), value: s.id };
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`chars_edit_remove_slot|${s.id}|${sessionKey}`)
+        .setLabel(label.slice(0, 80))
+        .setStyle(ButtonStyle.Danger)
+    );
+    if ((i + 1) % 5 === 0 || i === editor.slots.length - 1) { rows.push(row); row = new ActionRowBuilder(); }
   });
-  return [
-    new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(`chars_edit_remove_select|${sessionKey}`)
-        .setPlaceholder('Select a slot to remove...')
-        .addOptions(options)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`chars_edit_back|${sessionKey}`).setLabel('← BACK').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`chars_edit_apply|${sessionKey}`).setLabel('✅ APPLY').setStyle(ButtonStyle.Success).setDisabled(editor.slots.length === 0),
-      new ButtonBuilder().setCustomId(`chars_edit_cancel|${sessionKey}`).setLabel('❌ CANCEL').setStyle(ButtonStyle.Danger),
-    ),
-  ];
+  const backBtn = new ButtonBuilder().setCustomId(`chars_edit_back|${sessionKey}`).setLabel('← BACK').setStyle(ButtonStyle.Secondary);
+  if (rows.length < 5) {
+    rows.push(new ActionRowBuilder().addComponents(backBtn));
+  } else if (rows[rows.length - 1].components.length < 5) {
+    rows[rows.length - 1].addComponents(backBtn);
+  }
+  return rows;
 }
 
 function applyCharsEdit(sessionKey, editor) {
@@ -1357,20 +1359,6 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('chars_edit_remove_select|')) {
-      const sessionKey = interaction.customId.slice('chars_edit_remove_select|'.length);
-      const editor = pendingCustomEditors.get(interaction.user.id);
-      if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
-      const state = charsState.get(sessionKey);
-      if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
-      const slotId = interaction.values[0];
-      const idx = editor.slots.findIndex(s => s.id === slotId);
-      if (idx !== -1) editor.slots.splice(idx, 1);
-      editor.view = 'add';
-      await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
-      return;
-    }
-
     if (interaction.isStringSelectMenu() && interaction.customId === 'remove_absence_select') {
       const id = interaction.values[0];
       const guildAbsences = getAbsences(interaction.guildId);
@@ -1645,6 +1633,21 @@ client.on('interactionCreate', async interaction => {
         if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
         editor.view = 'remove';
         await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditRemoveComponents(editor, state, sessionKey) });
+        return;
+      }
+
+      if (id.startsWith('chars_edit_remove_slot|')) {
+        const parts = id.split('|');
+        const slotId = parts[1];
+        const sessionKey = parts[2];
+        const editor = pendingCustomEditors.get(interaction.user.id);
+        if (!editor || editor.sessionKey !== sessionKey) { await interaction.update({ content: '❌ Editor session expired.', embeds: [], components: [] }); return; }
+        const state = charsState.get(sessionKey);
+        if (!state) { await interaction.update({ content: '❌ Roster has expired.', embeds: [], components: [] }); return; }
+        const idx = editor.slots.findIndex(s => s.id === slotId);
+        if (idx !== -1) editor.slots.splice(idx, 1);
+        editor.view = 'add';
+        await interaction.update({ embeds: [buildCharsEditEmbed(editor, state)], components: buildCharsEditAddComponents(editor, sessionKey) });
         return;
       }
 
