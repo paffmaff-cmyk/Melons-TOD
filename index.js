@@ -1167,7 +1167,7 @@ client.on('interactionCreate', async interaction => {
 
         // Ephemeral undo button (60s window)
         const todMsg = await interaction.fetchReply();
-        pendingTodUndos.set(interaction.user.id, { messageId: todMsg.id, channelId: interaction.channelId, guildId: interaction.guildId, bossName: boss.name, alertKey });
+        pendingTodUndos.set(interaction.user.id, { messageId: todMsg.id, channelId: interaction.channelId, guildId: interaction.guildId, bossName: boss.name, alertKey, todTime, windowStart, windowEnd });
         setTimeout(() => pendingTodUndos.delete(interaction.user.id), 60 * 1000);
         await interaction.followUp({
           content: '↩️ Recorded! You have 60s to undo:',
@@ -1544,7 +1544,24 @@ client.on('interactionCreate', async interaction => {
         delete bossAlerts[undo.alertKey]; saveBossAlerts();
         if (todState[undo.guildId]?.[undo.bossName]) { delete todState[undo.guildId][undo.bossName]; saveTodState(); }
         try { const ch = await client.channels.fetch(undo.channelId); const msg = await ch.messages.fetch(undo.messageId); await msg.delete(); } catch (_) {}
-        await interaction.update({ content: '✅ TOD undone and message deleted.', components: [] });
+
+        // Public notification in the TOD channel
+        try {
+          const ch = await client.channels.fetch(undo.channelId);
+          await ch.send({ embeds: [new EmbedBuilder()
+            .setColor(0xED4245)
+            .setTitle(`↩️ TOD Undone — ${undo.bossName}`)
+            .addFields(
+              { name: 'Undone by',    value: `${interaction.user}`, inline: false },
+              { name: 'TOD was',      value: discordTime(undo.todTime, 'F'),      inline: false },
+              { name: 'Window start', value: discordTime(undo.windowStart, 'F'),  inline: true  },
+              { name: 'Window end',   value: discordTime(undo.windowEnd, 'F'),    inline: true  },
+            )
+            .setTimestamp()
+          ]});
+        } catch (_) {}
+
+        await interaction.update({ content: '✅ TOD undone.', components: [] });
         autoDelete(interaction, 5);
         return;
       }
