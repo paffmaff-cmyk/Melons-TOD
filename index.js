@@ -464,7 +464,7 @@ const pendingCustomEditors = new Map();
 
 const CRYSTAL_EMOJI  = { blue: '🔵', green: '🟢', red: '🔴' };
 const CRYSTAL_LABEL  = { blue: 'B', green: 'G', red: 'R' };
-const CRYSTAL_LEVELS = ['11', '12', '13', '14'];
+const CRYSTAL_LEVELS = ['11', '12', '13', '14', '15', '16'];
 const CRYSTAL_OPTIONS = [
   ...CRYSTAL_LEVELS.map(l => ({ label: `🔵 B-${l}`, value: `blue_${l}` })),
   ...CRYSTAL_LEVELS.map(l => ({ label: `🟢 G-${l}`, value: `green_${l}` })),
@@ -473,7 +473,7 @@ const CRYSTAL_OPTIONS = [
 ];
 
 function parseCrystalInput(text) {
-  const m = text.trim().match(/^(blue?|b|gr(?:een?)?|g|red?|r)[-\s]?(1[1-4])$/i);
+  const m = text.trim().match(/^(blue?|b|gr(?:een?)?|g|red?|r)[-\s]?(1[1-6])$/i);
   if (!m) return null;
   const c = m[1].toLowerCase();
   const color = (c === 'b' || c.startsWith('bl')) ? 'blue'
