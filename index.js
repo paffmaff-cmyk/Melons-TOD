@@ -1372,10 +1372,16 @@ client.on('interactionCreate', async interaction => {
         const type  = interaction.commandName;
         const item  = interaction.options.getString('item');
         const price = interaction.options.getString('price');
-        const days  = Math.min(interaction.options.getInteger('days') ?? 7, 7);
-        const now   = Date.now();
-        const expiresAt = now + days * 24 * 60 * 60 * 1000;
-        const deletesAt = expiresAt + 24 * 60 * 60 * 1000;
+        const daysInput = interaction.options.getInteger('days') ?? 7;
+        const isTester  = process.env.TEST_USER_ID && interaction.user.id === process.env.TEST_USER_ID;
+        const now       = Date.now();
+        // Tester: value = minutes. Everyone else: value = days (max 7).
+        const expiresAt = isTester
+          ? now + daysInput * 60 * 1000
+          : now + Math.min(daysInput, 7) * 24 * 60 * 60 * 1000;
+        const deletesAt = isTester
+          ? expiresAt + 60 * 1000          // 1 extra minute for tester
+          : expiresAt + 24 * 60 * 60 * 1000;
         const listing = {
           type, item, price, userId: interaction.user.id, username: interaction.user.username,
           channelId: interaction.channelId, messageId: null,
