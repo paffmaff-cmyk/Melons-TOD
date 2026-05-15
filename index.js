@@ -1372,7 +1372,7 @@ client.on('interactionCreate', async interaction => {
         const type  = interaction.commandName;
         const item  = interaction.options.getString('item');
         const price = interaction.options.getString('price');
-        const daysInput = interaction.options.getInteger('list_for') ?? 7;
+        const daysInput = interaction.options.getInteger('list_for_days') ?? 7;
         const isTester  = process.env.TEST_USER_ID && interaction.user.id === process.env.TEST_USER_ID;
         const now       = Date.now();
         // Tester: value = minutes. Everyone else: value = days (max 7).
