@@ -1380,17 +1380,13 @@ client.on('interactionCreate', async interaction => {
           channelId: interaction.channelId, messageId: null,
           postedAt: now, expiresAt, deletesAt, status: 'active',
         };
-        // Defer ephemerally so Discord's 3s window is satisfied, then delete ack — the actual
-        // listing is sent as a regular channel message so Discord's dismiss X never appears.
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const msg = await interaction.channel.send({ ...buildListingMsg(listing), components: [] });
+        const msg = await interaction.reply({ ...buildListingMsg(listing), components: [], fetchReply: true });
         listing.messageId = msg.id;
         if (!listings[interaction.guildId]) listings[interaction.guildId] = {};
         listings[interaction.guildId][msg.id] = listing;
         saveListings();
         await msg.edit({ components: buildListingComponents(listing, msg.id) });
         scheduleListingTimers(interaction.guildId, msg.id);
-        await interaction.deleteReply().catch(() => {});
         return;
       }
 
