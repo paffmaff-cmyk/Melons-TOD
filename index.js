@@ -1021,13 +1021,6 @@ function scheduleCloseAlert(alertKey, bossName, channelId, windowEndMs) {
 
 // ── Market listing helpers ────────────────────────────────────
 function listingExpiresStr(listing) {
-  const remaining = listing.expiresAt - Date.now();
-  if (remaining > 0 && remaining < 24 * 60 * 60 * 1000) {
-    const totalMins = Math.floor(remaining / 60000);
-    const h = Math.floor(totalMins / 60);
-    const m = totalMins % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  }
   return `<t:${Math.floor(listing.expiresAt / 1000)}:R>`;
 }
 
@@ -1233,23 +1226,6 @@ client.once('clientReady', async () => {
       scheduleListingTimers(guildId, messageId);
     }
   }
-
-  // Every minute: update HH:MM countdown on listings with < 24h remaining
-  setInterval(async () => {
-    const now = Date.now();
-    for (const [, guildListings] of Object.entries(listings)) {
-      for (const [messageId, listing] of Object.entries(guildListings)) {
-        if (listing.status !== 'active') continue;
-        const remaining = listing.expiresAt - now;
-        if (remaining <= 0 || remaining >= 24 * 60 * 60 * 1000) continue;
-        try {
-          const ch  = await client.channels.fetch(listing.channelId);
-          const msg = await ch.messages.fetch(messageId);
-          await msg.edit({ content: buildListingMsg(listing).content });
-        } catch (_) {}
-      }
-    }
-  }, 60 * 1000);
 
 });
 
