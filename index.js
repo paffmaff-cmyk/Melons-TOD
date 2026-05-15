@@ -1119,9 +1119,11 @@ function buildFortEmbed(data) {
     if (remaining <= 0) {
       cooldownStr = 'Available now';
     } else {
-      const h = Math.floor(remaining / 3600000);
-      const m = Math.floor((remaining % 3600000) / 60000);
-      cooldownStr = `${h}:${String(m).padStart(2, '0')}`;
+      const totalSecs = Math.ceil(remaining / 1000);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      cooldownStr = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     }
     fields.push(
       { name: '⏳ Cooldown ends', value: cooldownStr },
@@ -1261,7 +1263,7 @@ client.once('clientReady', async () => {
     }
   }, 60 * 1000);
 
-  // Every 60s: update H:MM countdown on fort cooldown messages (same cadence as WTS)
+  // Every 5s: update H:MM:SS countdown on fort cooldown messages
   setInterval(async () => {
     const now = Date.now();
     for (const [msgId, data] of fortMessages) {
@@ -1277,7 +1279,7 @@ client.once('clientReady', async () => {
       }
       if (expired) fortMessages.delete(msgId);
     }
-  }, 60 * 1000);
+  }, 5 * 1000);
 });
 
 client.on('guildCreate', async guild => {
