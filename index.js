@@ -196,8 +196,10 @@ const waitingForImage     = new Map(); // userId → { channelId, setupInteracti
 const pendingRetry = new Map();
 // key: userId, value: { text, dateStr } — stored when modal has a date error
 
-const pendingTodUndos = new Map();
-const pendingShops    = new Map(); // userId → { interaction, timer }
+const pendingTodUndos  = new Map();
+const pendingFortUndos = new Map(); // userId → { messageId, channelId }
+const pendingShops     = new Map(); // userId → { interaction, timer }
+const fortMessages    = new Map(); // msgId → { fort, action, timeDisplay, nextFortTs, userId, channelId, postedAt }
 // key: userId, value: { messageId, channelId, guildId, bossName, alertKey }
 
 function buildAnnounceSetupEmbed(state) {
@@ -1092,6 +1094,38 @@ function scheduleListingTimers(guildId, messageId) {
   listingTimers.set(key, timers);
 }
 
+function buildFortEmbed(data) {
+  const icon = data.action === 'Farm' ? '🌾' : '⭐';
+  const fields = [
+    { name: '⏰ Starts',      value: data.timeDisplay },
+    { name: `${icon} Action`, value: data.action },
+    { name: '👤 By',          value: `<@${data.userId}>` },
+  ];
+  if (data.nextFortTs) {
+    const remaining = data.nextFortTs * 1000 - Date.now();
+    let cooldownStr;
+    if (remaining <= 0) {
+      cooldownStr = 'Available now';
+    } else {
+      const totalSecs = Math.ceil(remaining / 1000);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      cooldownStr = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    fields.push(
+      { name: '⏳ Cooldown ends', value: cooldownStr },
+      { name: '🔜 Next fort available', value: `<t:${data.nextFortTs}:t>` },
+    );
+  }
+  return new EmbedBuilder()
+    .setColor(data.action === 'Farm' ? 0xE67E22 : 0x9B59B6)
+    .setTitle(`🏰 ${data.fort}`)
+    .addFields(fields)
+    .setTimestamp(new Date(data.postedAt))
+    .setFooter({ text: "Melon's Bot" });
+}
+
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
@@ -1216,6 +1250,28 @@ client.once('clientReady', async () => {
       }
     }
   }, 60 * 1000);
+
+  // Every 30s: update H:MM:SS countdown on fort cooldown messages
+  setInterval(async () => {
+    const now = Date.now();
+    for (const [msgId, data] of fortMessages) {
+      if (data.nextFortTs * 1000 <= now) {
+        // Cooldown expired — do a final edit to show "Available now" then remove
+        try {
+          const ch  = await client.channels.fetch(data.channelId);
+          const msg = await ch.messages.fetch(msgId);
+          await msg.edit({ embeds: [buildFortEmbed(data)] });
+        } catch (_) {}
+        fortMessages.delete(msgId);
+        continue;
+      }
+      try {
+        const ch  = await client.channels.fetch(data.channelId);
+        const msg = await ch.messages.fetch(msgId);
+        await msg.edit({ embeds: [buildFortEmbed(data)] });
+      } catch (_) { fortMessages.delete(msgId); }
+    }
+  }, 30 * 1000);
 });
 
 client.on('guildCreate', async guild => {
@@ -1399,14 +1455,12 @@ client.on('interactionCreate', async interaction => {
         const fort   = interaction.options.getString('fort');
         const time   = interaction.options.getString('time');
         const action = interaction.options.getString('action');
-        const icon   = action === 'Farm' ? '🌾' : '⭐';
 
-        // Parse time as Europe/Vilnius — accepts ":MM" (current hour) or "HH:MM" (exact)
         let timeDisplay = time;
         let nextFortTs  = null;
-        // Accepts "MM" or "M" (minutes only, uses current Vilnius hour) or "HH:MM" (exact time)
-        const minsOnly  = time.trim().match(/^(\d{1,2})$/);
-        const fullMatch = time.trim().match(/^(\d{1,2}):(\d{2})$/);
+        const cleanTime = time.trim().replace(/^:/, ''); // strip leading colon so ":40" works same as "40"
+        const minsOnly  = cleanTime.match(/^(\d{1,2})$/);
+        const fullMatch = cleanTime.match(/^(\d{1,2}):(\d{2})$/);
         if (minsOnly || fullMatch) {
           const now = new Date();
           const nowParts = new Intl.DateTimeFormat('en-US', {
@@ -1422,27 +1476,28 @@ client.on('interactionCreate', async interaction => {
           nextFortTs   = fortTs + 5 * 60 * 60;
         }
 
-        const fields = [
-          { name: '⏰ Starts',      value: timeDisplay,             inline: true },
-          { name: `${icon} Action`, value: action,                  inline: true },
-          { name: '👤 By',          value: `${interaction.user}`,   inline: true },
-        ];
+        const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
+        const msg = await interaction.reply({ embeds: [buildFortEmbed(fortData)], fetchReply: true });
         if (nextFortTs) {
-          fields.push(
-            { name: '⏳ Cooldown ends', value: `<t:${nextFortTs}:R>`,  inline: true },
-            { name: '🔜 Next fort',     value: `<t:${nextFortTs}:t>`,  inline: true },
-          );
+          fortMessages.set(msg.id, { ...fortData, channelId: msg.channelId });
         }
 
-        await interaction.reply({
-          embeds: [new EmbedBuilder()
-            .setColor(action === 'Farm' ? 0xE67E22 : 0x9B59B6)
-            .setTitle(`🏰 ${fort}`)
-            .addFields(fields)
-            .setTimestamp()
-            .setFooter({ text: "Melon's Bot" })
-          ],
+        // Ephemeral undo button (60s window)
+        pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: msg.channelId });
+        setTimeout(() => pendingFortUndos.delete(interaction.user.id), 60 * 1000);
+        const fortUndoMsg = await interaction.followUp({
+          content: '↩️ Registered! You have 60s to undo:',
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('fort_undo').setLabel('↩ Undo Fort').setStyle(ButtonStyle.Danger)
+          )],
+          flags: MessageFlags.Ephemeral,
+          fetchReply: true,
         });
+        setTimeout(async () => {
+          try { await interaction.deleteReply(fortUndoMsg.id); } catch (_) {
+            try { await fortUndoMsg.edit({ content: '​', components: [] }); } catch (__) {}
+          }
+        }, 60 * 1000);
         return;
       }
 
@@ -1948,6 +2003,21 @@ client.on('interactionCreate', async interaction => {
         } catch (_) {}
 
         await interaction.update({ content: '✅ TOD undone.', components: [] });
+        autoDelete(interaction, 5);
+        return;
+      }
+
+      // ── Fort undo ──
+      if (id === 'fort_undo') {
+        const undo = pendingFortUndos.get(interaction.user.id);
+        pendingFortUndos.delete(interaction.user.id);
+        if (!undo) {
+          await interaction.update({ content: '⏱️ Undo window has expired.', components: [] });
+          return;
+        }
+        fortMessages.delete(undo.messageId);
+        try { const ch = await client.channels.fetch(undo.channelId); const msg = await ch.messages.fetch(undo.messageId); await msg.delete(); } catch (_) {}
+        await interaction.update({ content: '✅ Fort registration undone.', components: [] });
         autoDelete(interaction, 5);
         return;
       }

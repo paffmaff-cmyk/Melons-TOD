@@ -105,7 +105,7 @@ const commands = [
     .setName('fort')
     .setDescription('Register a fortress run')
     .addStringOption(o => o.setName('fort').setDescription('Fortress name').setRequired(true))
-    .addStringOption(o => o.setName('time').setDescription('Event start time — full: 23:50 or just minutes: 50 (uses current hour)').setRequired(true))
+    .addStringOption(o => o.setName('time').setDescription('Start time — full: 23:50 or minutes only: 40 or :40 (uses current hour)').setRequired(true))
     .addStringOption(o => o.setName('action').setDescription('Farm or Fame').setRequired(true)
       .addChoices(
         { name: 'Farm', value: 'Farm' },
