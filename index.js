@@ -1765,9 +1765,10 @@ client.on('interactionCreate', async interaction => {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const guildBosses = getGuildBosses(interaction.guildId);
         const bossNames = new Map(guildBosses.map(b => [b.name.toLowerCase(), b.name]));
-        const newHistory = {};
+
+        // Pass 1: collect every matching kill event with timestamp
+        const killEvents = []; // { bossName, killedBy, dropped, timestamp, source }
         let lastId = null;
-        let scanned = 0;
 
         while (true) {
           const opts = { limit: 100 };
@@ -1778,29 +1779,75 @@ client.on('interactionCreate', async interaction => {
           for (const msg of messages.values()) {
             for (const embed of msg.embeds) {
               if (!embed.title) continue;
-              const footer = embed.footer?.text ?? '';
-              const isRedAlert = embed.title.includes(' Killed by ');
-              if (!footer.includes("Melon's Bot") && !isRedAlert) continue;
-              const rawName = isRedAlert
-                ? embed.title.split(' Killed by ')[0].trim()
-                : embed.title.split(' — ')[0].trim();
+              const footer      = embed.footer?.text ?? '';
+              const isMelonBot  = footer.includes("Melon's Bot");
+              // Only treat as Red Alert if it's NOT our own embed (our titles also contain 'Killed by')
+              const isRedAlert  = !isMelonBot && embed.title.includes(' Killed by ');
+              if (!isMelonBot && !isRedAlert) continue;
+
+              // Extract boss name using the correct split for each source
+              const rawName = isMelonBot
+                ? embed.title.split(' — ')[0].trim()        // "Queen Ant — Killed by ally" → "Queen Ant"
+                : embed.title.split(' Killed by ')[0].trim(); // "Queen Ant Killed by Bob"   → "Queen Ant"
               const bossName = bossNames.get(rawName.toLowerCase());
               if (!bossName) continue;
+
               const dropField = embed.fields?.find(f => f.name === 'Drop');
               if (!dropField) continue;
-              const killedBy = embed.title.includes('Ally') ? 'ally' : embed.title.includes('Enemy') ? 'enemy' : null;
-              const dropped  = dropField.value.includes('✅');
-              if (!newHistory[bossName]) newHistory[bossName] = { allyKills: 0, enemyKills: 0, unknownKills: 0, drops: 0, noDrops: 0 };
-              const s = newHistory[bossName];
-              if (killedBy === 'ally') s.allyKills++;
-              else if (killedBy === 'enemy') s.enemyKills++;
-              else s.unknownKills++;
-              if (dropped) s.drops++; else s.noDrops++;
-              scanned++;
+
+              // killedBy only available in Melon's Bot titles (lowercase 'ally'/'enemy')
+              let killedBy = null;
+              if (isMelonBot) {
+                if (/killed by ally/i.test(embed.title))  killedBy = 'ally';
+                else if (/killed by enemy/i.test(embed.title)) killedBy = 'enemy';
+              }
+
+              const dropped = dropField.value.includes('✅');
+              killEvents.push({ bossName, killedBy, dropped, timestamp: msg.createdTimestamp, source: isMelonBot ? 'melon' : 'alert' });
             }
           }
           lastId = messages.last()?.id;
           if (messages.size < 100) break;
+        }
+
+        // Pass 2: group by boss, sort oldest→newest, deduplicate within ±10 min
+        const killsByBoss = {};
+        for (const ev of killEvents) {
+          if (!killsByBoss[ev.bossName]) killsByBoss[ev.bossName] = [];
+          killsByBoss[ev.bossName].push(ev);
+        }
+
+        const newHistory = {};
+        let scanned    = 0;
+        let duplicates = 0;
+
+        for (const [bossName, events] of Object.entries(killsByBoss)) {
+          events.sort((a, b) => a.timestamp - b.timestamp);
+          const kept = [];
+          for (const ev of events) {
+            const dup = kept.find(k => Math.abs(k.timestamp - ev.timestamp) <= 10 * 60 * 1000);
+            if (dup) {
+              // Prefer Melon's Bot entry — it has killedBy and reliable drop info
+              if (ev.source === 'melon' && dup.source !== 'melon') {
+                dup.killedBy = ev.killedBy;
+                dup.dropped  = ev.dropped;
+                dup.source   = 'melon';
+              }
+              duplicates++;
+              continue;
+            }
+            kept.push({ ...ev });
+          }
+
+          newHistory[bossName] = { allyKills: 0, enemyKills: 0, unknownKills: 0, drops: 0, noDrops: 0 };
+          const s = newHistory[bossName];
+          for (const e of kept) {
+            if (e.killedBy === 'ally')        s.allyKills++;
+            else if (e.killedBy === 'enemy')  s.enemyKills++;
+            else                              s.unknownKills++;
+            if (e.dropped) s.drops++; else s.noDrops++;
+            scanned++;
+          }
         }
 
         dropHistory[interaction.guildId] = newHistory;
@@ -1818,7 +1865,11 @@ client.on('interactionCreate', async interaction => {
                   return `• **${name}** — ${total} kills, ${s.drops} drops (${pct}%)`;
                 }).join('\n')
               : '*No TOD records found in this channel.*')
-            .addFields({ name: 'Records processed', value: String(scanned), inline: true })
+            .addFields(
+              { name: 'Records found',      value: String(killEvents.length), inline: true },
+              { name: 'After dedup',        value: String(scanned),           inline: true },
+              { name: 'Duplicates removed', value: String(duplicates),        inline: true },
+            )
             .setFooter({ text: "Melon's Bot" })
           ],
         });
