@@ -1025,7 +1025,10 @@ function buildListingEmbed(listing) {
     .setFooter({ text: "Melon's Bot" });
   const fields = [];
   if (listing.price) fields.push({ name: isWts ? 'Price' : 'Offering', value: listing.price, inline: true });
-  if (listing.status === 'active') fields.push({ name: 'Expires', value: `<t:${Math.floor(listing.expiresAt / 1000)}:R>`, inline: true });
+  if (listing.status === 'active') {
+    const expTs = Math.floor(listing.expiresAt / 1000);
+    fields.push({ name: 'Expires', value: `<t:${expTs}:R> (<t:${expTs}:t>)`, inline: true });
+  }
   fields.push({ name: isWts ? 'Seller' : 'Buyer', value: `<@${listing.userId}>`, inline: false });
   embed.addFields(fields);
   return embed;
@@ -1378,13 +1381,17 @@ client.on('interactionCreate', async interaction => {
           channelId: interaction.channelId, messageId: null,
           postedAt: now, expiresAt, deletesAt, status: 'active',
         };
-        const msg = await interaction.reply({ embeds: [buildListingEmbed(listing)], components: buildListingComponents(listing, 'tmp'), fetchReply: true });
+        // Defer ephemerally so Discord's 3s window is satisfied, then delete ack — the actual
+        // listing is sent as a regular channel message so Discord's dismiss X never appears.
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const msg = await interaction.channel.send({ embeds: [buildListingEmbed(listing)], components: [] });
         listing.messageId = msg.id;
         if (!listings[interaction.guildId]) listings[interaction.guildId] = {};
         listings[interaction.guildId][msg.id] = listing;
         saveListings();
         await msg.edit({ components: buildListingComponents(listing, msg.id) });
         scheduleListingTimers(interaction.guildId, msg.id);
+        await interaction.deleteReply().catch(() => {});
         return;
       }
 
@@ -1414,7 +1421,17 @@ client.on('interactionCreate', async interaction => {
             lines.push(`• **${l.item}**${price} | <@${l.userId}> | expires <t:${Math.floor(l.expiresAt / 1000)}:R>`);
           }
         }
-        await replyEph(interaction, { content: lines.join('\n') }, 60);
+        // Build link buttons (up to 25) — one per listing, jumps to the message in chat
+        const allActive = [...wts, ...wtb];
+        const btnRows = [];
+        for (let i = 0; i < Math.min(allActive.length, 25); i++) {
+          if (i % 5 === 0) btnRows.push(new ActionRowBuilder());
+          const l = allActive[i];
+          const url = `https://discord.com/channels/${interaction.guildId}/${l.channelId}/${l.messageId}`;
+          const label = `${l.type === 'wts' ? '🟣' : '🟡'} ${l.item}`.slice(0, 80);
+          btnRows[btnRows.length - 1].addComponents(new ButtonBuilder().setLabel(label).setStyle(ButtonStyle.Link).setURL(url));
+        }
+        await replyEph(interaction, { content: lines.join('\n'), components: btnRows });
         return;
       }
 
