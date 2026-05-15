@@ -193,6 +193,7 @@ const pendingRetry = new Map();
 // key: userId, value: { text, dateStr } — stored when modal has a date error
 
 const pendingTodUndos = new Map();
+const pendingShops    = new Map(); // userId → { interaction, timer }
 // key: userId, value: { messageId, channelId, guildId, bossName, alertKey }
 
 function buildAnnounceSetupEmbed(state) {
@@ -1392,10 +1393,23 @@ client.on('interactionCreate', async interaction => {
 
       // ── /shops ──
       if (interaction.commandName === 'shops') {
+        // Delete previous shops message for this user if still active
+        const prev = pendingShops.get(interaction.user.id);
+        if (prev) {
+          clearTimeout(prev.timer);
+          try { await prev.interaction.deleteReply(); } catch (_) {}
+          pendingShops.delete(interaction.user.id);
+        }
+
         const guildListings = listings[interaction.guildId] ?? {};
         const active = Object.values(guildListings).filter(l => l.status === 'active');
         if (active.length === 0) {
-          await replyEph(interaction, { content: '📭 No active listings.' });
+          await interaction.reply({ content: '📭 No active listings.', flags: MessageFlags.Ephemeral });
+          const timer = setTimeout(async () => {
+            try { await interaction.deleteReply(); } catch (_) {}
+            pendingShops.delete(interaction.user.id);
+          }, 300 * 1000);
+          pendingShops.set(interaction.user.id, { interaction, timer });
           return;
         }
         const wts = active.filter(l => l.type === 'wts');
@@ -1415,7 +1429,12 @@ client.on('interactionCreate', async interaction => {
           lines.push(`**WTB (${wtb.length})**`);
           for (const l of wtb) lines.push(listingLine(l));
         }
-        await replyEph(interaction, { content: lines.join('\n') });
+        await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
+        const timer = setTimeout(async () => {
+          try { await interaction.deleteReply(); } catch (_) {}
+          pendingShops.delete(interaction.user.id);
+        }, 300 * 1000);
+        pendingShops.set(interaction.user.id, { interaction, timer });
         return;
       }
 
