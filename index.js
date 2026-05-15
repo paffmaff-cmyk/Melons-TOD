@@ -1403,6 +1403,7 @@ client.on('interactionCreate', async interaction => {
 
         // Parse HH:MM as Europe/Vilnius and convert to a Discord timestamp
         let timeDisplay = time;
+        let nextFortTs  = null;
         const tm = time.match(/^(\d{1,2}):(\d{2})$/);
         if (tm) {
           const now = new Date();
@@ -1410,18 +1411,28 @@ client.on('interactionCreate', async interaction => {
             timeZone: BOT_TIMEZONE, year: 'numeric', month: 'numeric', day: 'numeric',
           }).formatToParts(now).reduce((a, p) => { if (p.type !== 'literal') a[p.type] = parseInt(p.value); return a; }, {});
           const utc = zonedToUtc(parts.year, parts.month - 1, parts.day, parseInt(tm[1]), parseInt(tm[2]), BOT_TIMEZONE);
-          timeDisplay = `<t:${Math.floor(utc.getTime() / 1000)}:t>`;
+          const fortTs = Math.floor(utc.getTime() / 1000);
+          timeDisplay  = `<t:${fortTs}:t>`;
+          nextFortTs   = fortTs + 5 * 60 * 60;
+        }
+
+        const fields = [
+          { name: '⏰ Starts',      value: timeDisplay,             inline: true },
+          { name: `${icon} Action`, value: action,                  inline: true },
+          { name: '👤 By',          value: `${interaction.user}`,   inline: true },
+        ];
+        if (nextFortTs) {
+          fields.push(
+            { name: '⏳ Cooldown ends', value: `<t:${nextFortTs}:R>`,  inline: true },
+            { name: '🔜 Next fort',     value: `<t:${nextFortTs}:t>`,  inline: true },
+          );
         }
 
         await interaction.reply({
           embeds: [new EmbedBuilder()
             .setColor(action === 'Farm' ? 0xE67E22 : 0x9B59B6)
             .setTitle(`🏰 ${fort}`)
-            .addFields(
-              { name: '⏰ Time',        value: timeDisplay,         inline: true },
-              { name: `${icon} Action`, value: action,              inline: true },
-              { name: '👤 By',          value: `${interaction.user}`, inline: true },
-            )
+            .addFields(fields)
             .setTimestamp()
             .setFooter({ text: "Melon's Bot" })
           ],
