@@ -1440,10 +1440,9 @@ client.on('interactionCreate', async interaction => {
           const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
           const msg = await interaction.reply({ embeds: [buildFortEmbed(fortData)], fetchReply: true });
 
+          // Ephemeral undo button (60s window) — register BEFORE recording stat so undo can reverse it
+          pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: interaction.channelId, guildId: interaction.guildId });
           recordFort(interaction.guildId, interaction.user.id, interaction.user.username);
-
-          // Ephemeral undo button (60s window)
-          pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: interaction.channelId });
           setTimeout(() => pendingFortUndos.delete(interaction.user.id), 60 * 1000);
           const fortUndoMsg = await interaction.followUp({
             content: '↩️ Registered! You have 60s to undo:',
@@ -2049,6 +2048,12 @@ client.on('interactionCreate', async interaction => {
         if (!undo) {
           await interaction.update({ content: '⏱️ Undo window has expired.', components: [] });
           return;
+        }
+        // Decrement the stat that was incremented on log
+        const guildStats = fortStats[undo.guildId];
+        if (guildStats?.[interaction.user.id]) {
+          guildStats[interaction.user.id].count = Math.max(0, guildStats[interaction.user.id].count - 1);
+          saveFortStats();
         }
         try { const ch = await client.channels.fetch(undo.channelId); const msg = await ch.messages.fetch(undo.messageId); await msg.delete(); } catch (_) {}
         await interaction.update({ content: '✅ Fort registration undone.', components: [] });
