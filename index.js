@@ -101,6 +101,12 @@ function recordDrop(guildId, bossName, killedBy, dropped) {
   saveDropHistory();
 }
 
+// ── Market listings (per-guild, per-message) ──────────────────
+const LISTINGS_FILE = path.join(__dirname, 'listings.json');
+let listings = fs.existsSync(LISTINGS_FILE) ? JSON.parse(fs.readFileSync(LISTINGS_FILE, 'utf8')) : {};
+function saveListings() { fs.writeFileSync(LISTINGS_FILE, JSON.stringify(listings, null, 2)); }
+const listingTimers = new Map(); // key: "guildId:messageId" → { expiry, delete }
+
 // ── TOD state (live window tracking, separate from alerts) ────
 const TOD_STATE_FILE = path.join(__dirname, 'tod_state.json');
 let todState = fs.existsSync(TOD_STATE_FILE) ? JSON.parse(fs.readFileSync(TOD_STATE_FILE, 'utf8')) : {};
@@ -999,6 +1005,86 @@ function scheduleCloseAlert(alertKey, bossName, channelId, windowEndMs) {
   closeAlertTimers.set(alertKey, timer);
 }
 
+// ── Market listing helpers ────────────────────────────────────
+function buildListingEmbed(listing) {
+  const isWts = listing.type === 'wts';
+  let color, title;
+  if (listing.status === 'active') {
+    color = isWts ? 0x9B59B6 : 0xF0B232;
+    title = isWts ? 'WTS' : 'WTB';
+  } else {
+    const suffix = listing.status === 'sold' ? 'SOLD' : listing.status === 'found' ? 'FOUND' : 'EXPIRED';
+    color = 0xED4245;
+    title = `${isWts ? 'WTS' : 'WTB'} — ${suffix}`;
+  }
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(`**${listing.item}**`)
+    .setTimestamp(listing.postedAt)
+    .setFooter({ text: "Melon's Bot" });
+  const fields = [];
+  if (listing.price) fields.push({ name: isWts ? 'Price' : 'Offering', value: listing.price, inline: true });
+  if (listing.status === 'active') fields.push({ name: 'Expires', value: `<t:${Math.floor(listing.expiresAt / 1000)}:R>`, inline: true });
+  fields.push({ name: isWts ? 'Seller' : 'Buyer', value: `<@${listing.userId}>`, inline: false });
+  embed.addFields(fields);
+  return embed;
+}
+
+function buildListingComponents(listing, messageId) {
+  const uid = listing.userId;
+  const isWts = listing.type === 'wts';
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`listing_close:${uid}:${messageId}`).setLabel(isWts ? '✅ Mark as Sold' : '✅ Mark as Found').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`listing_remove:${uid}:${messageId}`).setLabel('🗑️ Remove').setStyle(ButtonStyle.Danger),
+  )];
+}
+
+async function markListingExpired(guildId, messageId) {
+  const listing = listings[guildId]?.[messageId];
+  if (!listing || listing.status !== 'active') return;
+  listing.status = 'expired';
+  saveListings();
+  try {
+    const ch = await client.channels.fetch(listing.channelId);
+    const msg = await ch.messages.fetch(messageId);
+    await msg.edit({ embeds: [buildListingEmbed(listing)], components: [] });
+  } catch (_) {}
+}
+
+async function deleteListingMessage(guildId, messageId) {
+  const listing = listings[guildId]?.[messageId];
+  if (listing) {
+    try {
+      const ch = await client.channels.fetch(listing.channelId);
+      const msg = await ch.messages.fetch(messageId);
+      await msg.delete();
+    } catch (_) {}
+    delete listings[guildId][messageId];
+    saveListings();
+  }
+  listingTimers.delete(`${guildId}:${messageId}`);
+}
+
+function scheduleListingTimers(guildId, messageId) {
+  const listing = listings[guildId]?.[messageId];
+  if (!listing) return;
+  const key = `${guildId}:${messageId}`;
+  const existing = listingTimers.get(key);
+  if (existing) { clearTimeout(existing.expiry); clearTimeout(existing.delete); }
+  const now = Date.now();
+  const timers = {};
+  if (listing.status === 'active') {
+    const expireIn = listing.expiresAt - now;
+    if (expireIn <= 0) { markListingExpired(guildId, messageId); return; }
+    timers.expiry = setTimeout(() => markListingExpired(guildId, messageId), expireIn);
+  }
+  const deleteIn = listing.deletesAt - now;
+  if (deleteIn <= 0) { deleteListingMessage(guildId, messageId); return; }
+  timers.delete = setTimeout(() => deleteListingMessage(guildId, messageId), deleteIn);
+  listingTimers.set(key, timers);
+}
+
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   client.user.setActivity('Boss Timers & Absences', { type: ActivityType.Watching });
@@ -1099,6 +1185,13 @@ client.once('clientReady', async () => {
     console.log(`[Alert] Restored alert for ${alert.bossName}`);
   }
   saveBossAlerts();
+
+  // Restore listing timers
+  for (const [guildId, guildListings] of Object.entries(listings)) {
+    for (const messageId of Object.keys(guildListings)) {
+      scheduleListingTimers(guildId, messageId);
+    }
+  }
 });
 
 client.on('guildCreate', async guild => {
@@ -1272,46 +1365,56 @@ client.on('interactionCreate', async interaction => {
       }
 
       // ── /wts ──
-      if (interaction.commandName === 'wts') {
-        const item = interaction.options.getString('item');
+      if (interaction.commandName === 'wts' || interaction.commandName === 'wtb') {
+        const type  = interaction.commandName;
+        const item  = interaction.options.getString('item');
         const price = interaction.options.getString('price');
-        const qty = interaction.options.getInteger('quantity');
-        const embed = new EmbedBuilder()
-          .setColor(0x57F287)
-          .setTitle(`🟢 WTS — ${item}`)
-          .addFields(
-            { name: 'Price',  value: price, inline: true },
-            ...(qty ? [{ name: 'Quantity', value: String(qty), inline: true }] : []),
-            { name: 'Seller', value: `${interaction.user}`, inline: false },
-          )
-          .setTimestamp()
-          .setFooter({ text: "Melon's Bot" });
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`wts_sold:${interaction.user.id}`).setLabel('✅ Mark as Sold').setStyle(ButtonStyle.Success)
-        );
-        await interaction.reply({ embeds: [embed], components: [row] });
+        const days  = Math.min(interaction.options.getInteger('days') ?? 7, 7);
+        const now   = Date.now();
+        const expiresAt = now + days * 24 * 60 * 60 * 1000;
+        const deletesAt = expiresAt + 24 * 60 * 60 * 1000;
+        const listing = {
+          type, item, price, userId: interaction.user.id, username: interaction.user.username,
+          channelId: interaction.channelId, messageId: null,
+          postedAt: now, expiresAt, deletesAt, status: 'active',
+        };
+        const msg = await interaction.reply({ embeds: [buildListingEmbed(listing)], components: buildListingComponents(listing, 'tmp'), fetchReply: true });
+        listing.messageId = msg.id;
+        if (!listings[interaction.guildId]) listings[interaction.guildId] = {};
+        listings[interaction.guildId][msg.id] = listing;
+        saveListings();
+        await msg.edit({ components: buildListingComponents(listing, msg.id) });
+        scheduleListingTimers(interaction.guildId, msg.id);
         return;
       }
 
-      // ── /wtb ──
-      if (interaction.commandName === 'wtb') {
-        const item = interaction.options.getString('item');
-        const price = interaction.options.getString('price');
-        const qty = interaction.options.getInteger('quantity');
-        const embed = new EmbedBuilder()
-          .setColor(0x5865F2)
-          .setTitle(`🔵 WTB — ${item}`)
-          .addFields(
-            { name: 'Offering', value: price, inline: true },
-            ...(qty ? [{ name: 'Quantity', value: String(qty), inline: true }] : []),
-            { name: 'Buyer', value: `${interaction.user}`, inline: false },
-          )
-          .setTimestamp()
-          .setFooter({ text: "Melon's Bot" });
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`wtb_found:${interaction.user.id}`).setLabel('✅ Mark as Found').setStyle(ButtonStyle.Success)
-        );
-        await interaction.reply({ embeds: [embed], components: [row] });
+      // ── /shops ──
+      if (interaction.commandName === 'shops') {
+        const guildListings = listings[interaction.guildId] ?? {};
+        const active = Object.values(guildListings).filter(l => l.status === 'active');
+        if (active.length === 0) {
+          await replyEph(interaction, { content: '📭 No active listings.' });
+          return;
+        }
+        const wts = active.filter(l => l.type === 'wts');
+        const wtb = active.filter(l => l.type === 'wtb');
+        const lines = [];
+        if (wts.length) {
+          lines.push(`**WTS (${wts.length})**`);
+          for (const l of wts) {
+            const price = l.price ? ` — ${l.price}` : '';
+            lines.push(`• **${l.item}**${price} | <@${l.userId}> | expires <t:${Math.floor(l.expiresAt / 1000)}:R>`);
+          }
+        }
+        if (wtb.length) {
+          if (wts.length) lines.push('');
+          lines.push(`**WTB (${wtb.length})**`);
+          for (const l of wtb) {
+            const price = l.price ? ` — offering ${l.price}` : '';
+            lines.push(`• **${l.item}**${price} | <@${l.userId}> | expires <t:${Math.floor(l.expiresAt / 1000)}:R>`);
+          }
+        }
+        await replyEph(interaction, { content: lines.join('\n') }, 60);
         return;
       }
 
@@ -1748,22 +1851,41 @@ client.on('interactionCreate', async interaction => {
       }
 
       // ── WTS / WTB close buttons ──
-      if (id.startsWith('wts_sold:') || id.startsWith('wtb_found:')) {
-        const ownerId = id.split(':')[1];
+      if (id.startsWith('listing_close:') || id.startsWith('listing_remove:')) {
+        const parts     = id.split(':');
+        const action    = parts[0];
+        const ownerId   = parts[1];
+        const messageId = parts[2];
         if (interaction.user.id !== ownerId) {
-          await replyEph(interaction, { content: '❌ Only the person who posted this listing can close it.' });
+          await replyEph(interaction, { content: '❌ Only the person who posted this listing can do that.' });
           return;
         }
-        const oldEmbed = interaction.message.embeds[0];
-        const isSold = id.startsWith('wts_sold:');
-        const label  = isSold ? 'SOLD' : 'FOUND';
-        const updated = new EmbedBuilder()
-          .setColor(0x95A5A6)
-          .setTitle(`~~${oldEmbed.title.replace(/^🟢 |^🔵 /, '')}~~ — ${label}`)
-          .setFields(oldEmbed.fields.map(f => ({ name: f.name, value: f.value, inline: f.inline })))
-          .setTimestamp()
-          .setFooter({ text: "Melon's Bot" });
-        await interaction.update({ embeds: [updated], components: [] });
+        const guildId = interaction.guildId;
+        const listing = listings[guildId]?.[messageId];
+        if (action === 'listing_remove') {
+          const tk = `${guildId}:${messageId}`;
+          const t  = listingTimers.get(tk);
+          if (t) { clearTimeout(t.expiry); clearTimeout(t.delete); listingTimers.delete(tk); }
+          if (listing) { delete listings[guildId][messageId]; saveListings(); }
+          await interaction.message.delete().catch(() => {});
+          return;
+        }
+        // listing_close
+        if (!listing || listing.status !== 'active') {
+          await replyEph(interaction, { content: '❌ Listing is already closed.' });
+          return;
+        }
+        listing.status = listing.type === 'wts' ? 'sold' : 'found';
+        saveListings();
+        const tk = `${guildId}:${messageId}`;
+        const t  = listingTimers.get(tk);
+        if (t?.expiry) { clearTimeout(t.expiry); t.expiry = null; }
+        await interaction.update({
+          embeds: [buildListingEmbed(listing)],
+          components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`listing_remove:${ownerId}:${messageId}`).setLabel('🗑️ Remove').setStyle(ButtonStyle.Danger)
+          )],
+        });
         return;
       }
 

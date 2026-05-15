@@ -19,6 +19,7 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 | `bosses.json` | Live boss data (runtime, gitignored). Auto-created from `bosses.default.json` if missing. |
 | `bosses.default.json` | Default boss list — fallback/reset source. Includes `Test Boss` (0.0167h spawn+window ≈ 1 min, for alert testing). |
 | `boss_alerts.json` | Pending window alerts (runtime, gitignored). Format: `{ "guildId:bossName": { bossName, channelId, windowStart, windowEnd } }` |
+| `listings.json` | Market listings: `{ [guildId]: { [messageId]: { type, item, price, userId, channelId, postedAt, expiresAt, deletesAt, status } } }` |
 | `absences.json` | Absence records: `{ [guildId]: [...entries] }` |
 | `announcements.json` | Announcement state per guild. |
 | `music_state.json` | Music queue state (runtime, do not edit manually). |
@@ -42,8 +43,9 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 | `/stop` | Stop music and disconnect from voice |
 | `/radio` | Play a live radio station (autocomplete) |
 | `/provider` | Set music provider for the server |
-| `/wts` | Post a Want To Sell listing — `item`, `price`, `quantity` (opt) — green embed with Mark as Sold button |
-| `/wtb` | Post a Want To Buy listing — `item`, `price`, `quantity` (opt) — blue embed with Mark as Found button |
+| `/wts` | Post a Want To Sell listing — `item` (req), `price`/`days` (opt, default 7d max) — purple embed |
+| `/wtb` | Post a Want To Buy listing — `item` (req), `price`/`days` (opt, default 7d max) — yellow embed |
+| `/shops` | Show all active WTS/WTB listings for the server (ephemeral) |
 | `/move` | Record a gear transfer — `from`, `gear`, `to` — posts `⚙️ From ➜ Gear ➜ To` |
 | `/gratz` | Congratulate a player on an epic item drop |
 | `/chars` | Create a raid roster — preset compositions or custom slot types |

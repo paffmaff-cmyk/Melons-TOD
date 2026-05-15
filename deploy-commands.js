@@ -84,16 +84,21 @@ const commands = [
     .setName('wts')
     .setDescription('Post a Want To Sell listing')
     .addStringOption(o => o.setName('item').setDescription('Item you are selling').setRequired(true))
-    .addStringOption(o => o.setName('price').setDescription('Asking price (e.g. 500kk, negotiable)').setRequired(true))
-    .addIntegerOption(o => o.setName('quantity').setDescription('How many').setRequired(false).setMinValue(1))
+    .addStringOption(o => o.setName('price').setDescription('Asking price (optional — e.g. 500kk, negotiable)').setRequired(false))
+    .addIntegerOption(o => o.setName('days').setDescription('How many days to list (default 7, max 7)').setRequired(false).setMinValue(1).setMaxValue(7))
     .toJSON(),
 
   new SlashCommandBuilder()
     .setName('wtb')
     .setDescription('Post a Want To Buy listing')
     .addStringOption(o => o.setName('item').setDescription('Item you are looking for').setRequired(true))
-    .addStringOption(o => o.setName('price').setDescription('What you are offering (e.g. 500kk, negotiable)').setRequired(true))
-    .addIntegerOption(o => o.setName('quantity').setDescription('How many').setRequired(false).setMinValue(1))
+    .addStringOption(o => o.setName('price').setDescription('What you are offering (optional — e.g. 500kk, negotiable)').setRequired(false))
+    .addIntegerOption(o => o.setName('days').setDescription('How many days to list (default 7, max 7)').setRequired(false).setMinValue(1).setMaxValue(7))
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('shops')
+    .setDescription('Show all active WTS and WTB listings')
     .toJSON(),
 
   new SlashCommandBuilder()
