@@ -1394,6 +1394,28 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // ── /fort ──
+      if (interaction.commandName === 'fort') {
+        const fort   = interaction.options.getString('fort');
+        const time   = interaction.options.getString('time');
+        const action = interaction.options.getString('action');
+        const icon   = action === 'Farm' ? '🌾' : '⭐';
+        await interaction.reply({
+          embeds: [new EmbedBuilder()
+            .setColor(action === 'Farm' ? 0xE67E22 : 0x9B59B6)
+            .setTitle(`🏰 ${fort}`)
+            .addFields(
+              { name: '⏰ Time',    value: time,           inline: true },
+              { name: `${icon} Action`, value: action,    inline: true },
+              { name: '👤 By',     value: `${interaction.user}`, inline: true },
+            )
+            .setTimestamp()
+            .setFooter({ text: "Melon's Bot" })
+          ],
+        });
+        return;
+      }
+
       // ── /wts ──
       if (interaction.commandName === 'wts' || interaction.commandName === 'wtb') {
         const type  = interaction.commandName;

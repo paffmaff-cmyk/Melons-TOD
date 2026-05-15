@@ -102,6 +102,18 @@ const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('fort')
+    .setDescription('Register a fortress run')
+    .addStringOption(o => o.setName('fort').setDescription('Fortress name').setRequired(true))
+    .addStringOption(o => o.setName('time').setDescription('Event start time (e.g. 23:50)').setRequired(true))
+    .addStringOption(o => o.setName('action').setDescription('Farm or Fame').setRequired(true)
+      .addChoices(
+        { name: 'Farm', value: 'Farm' },
+        { name: 'Fame', value: 'Fame' },
+      ))
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('move')
     .setDescription('Record a gear transfer between players')
     .addStringOption(o => o.setName('from').setDescription('Who is giving the gear').setRequired(true))

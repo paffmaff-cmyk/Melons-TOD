@@ -46,6 +46,7 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 | `/wts` | Post a Want To Sell listing — `item` (req), `price`/`days` (opt, default 7d max) — purple embed |
 | `/wtb` | Post a Want To Buy listing — `item` (req), `price`/`days` (opt, default 7d max) — yellow embed |
 | `/shops` | Show all active WTS/WTB listings for the server (ephemeral) |
+| `/fort` | Register a fortress run — `fort`, `time`, `action` (Farm/Fame) — orange embed for Farm, purple for Fame |
 | `/move` | Record a gear transfer — `from`, `gear`, `to` — posts `⚙️ From ➜ Gear ➜ To` |
 | `/gratz` | Congratulate a player on an epic item drop |
 | `/chars` | Create a raid roster — preset compositions or custom slot types |
