@@ -1119,11 +1119,9 @@ function buildFortEmbed(data) {
     if (remaining <= 0) {
       cooldownStr = 'Available now';
     } else {
-      const totalSecs = Math.ceil(remaining / 1000);
-      const h = Math.floor(totalSecs / 3600);
-      const m = Math.floor((totalSecs % 3600) / 60);
-      const s = totalSecs % 60;
-      cooldownStr = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      const h = Math.floor(remaining / 3600000);
+      const m = Math.floor((remaining % 3600000) / 60000);
+      cooldownStr = `${h}:${String(m).padStart(2, '0')}`;
     }
     fields.push(
       { name: '⏳ Cooldown ends', value: cooldownStr },
@@ -1263,7 +1261,7 @@ client.once('clientReady', async () => {
     }
   }, 60 * 1000);
 
-  // Every 10s: update H:MM:SS countdown on fort cooldown messages
+  // Every 60s: update H:MM countdown on fort cooldown messages (same cadence as WTS)
   setInterval(async () => {
     const now = Date.now();
     for (const [msgId, data] of fortMessages) {
@@ -1279,7 +1277,7 @@ client.once('clientReady', async () => {
       }
       if (expired) fortMessages.delete(msgId);
     }
-  }, 10 * 1000);
+  }, 60 * 1000);
 });
 
 client.on('guildCreate', async guild => {
@@ -1487,7 +1485,7 @@ client.on('interactionCreate', async interaction => {
             const utc    = zonedToUtc(nowParts.year, nowParts.month - 1, nowParts.day, h, m, BOT_TIMEZONE);
             const fortTs = Math.floor(utc.getTime() / 1000);
             timeDisplay  = `<t:${fortTs}:t>`;
-            nextFortTs   = fortTs + 5 * 60 * 60;
+            nextFortTs   = Math.floor(Date.now() / 1000) + 5 * 60 * 60;
           }
 
           const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
