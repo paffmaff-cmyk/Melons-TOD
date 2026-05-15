@@ -81,6 +81,22 @@ const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('wts')
+    .setDescription('Post a Want To Sell listing')
+    .addStringOption(o => o.setName('item').setDescription('Item you are selling').setRequired(true))
+    .addStringOption(o => o.setName('price').setDescription('Asking price (e.g. 500kk, negotiable)').setRequired(true))
+    .addIntegerOption(o => o.setName('quantity').setDescription('How many').setRequired(false).setMinValue(1))
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('wtb')
+    .setDescription('Post a Want To Buy listing')
+    .addStringOption(o => o.setName('item').setDescription('Item you are looking for').setRequired(true))
+    .addStringOption(o => o.setName('price').setDescription('What you are offering (e.g. 500kk, negotiable)').setRequired(true))
+    .addIntegerOption(o => o.setName('quantity').setDescription('How many').setRequired(false).setMinValue(1))
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('move')
     .setDescription('Record a gear transfer between players')
     .addStringOption(o => o.setName('from').setDescription('Who is giving the gear').setRequired(true))

@@ -1271,6 +1271,50 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // ── /wts ──
+      if (interaction.commandName === 'wts') {
+        const item = interaction.options.getString('item');
+        const price = interaction.options.getString('price');
+        const qty = interaction.options.getInteger('quantity');
+        const embed = new EmbedBuilder()
+          .setColor(0x57F287)
+          .setTitle(`🟢 WTS — ${item}`)
+          .addFields(
+            { name: 'Price',  value: price, inline: true },
+            ...(qty ? [{ name: 'Quantity', value: String(qty), inline: true }] : []),
+            { name: 'Seller', value: `${interaction.user}`, inline: false },
+          )
+          .setTimestamp()
+          .setFooter({ text: "Melon's Bot" });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`wts_sold:${interaction.user.id}`).setLabel('✅ Mark as Sold').setStyle(ButtonStyle.Success)
+        );
+        await interaction.reply({ embeds: [embed], components: [row] });
+        return;
+      }
+
+      // ── /wtb ──
+      if (interaction.commandName === 'wtb') {
+        const item = interaction.options.getString('item');
+        const price = interaction.options.getString('price');
+        const qty = interaction.options.getInteger('quantity');
+        const embed = new EmbedBuilder()
+          .setColor(0x5865F2)
+          .setTitle(`🔵 WTB — ${item}`)
+          .addFields(
+            { name: 'Offering', value: price, inline: true },
+            ...(qty ? [{ name: 'Quantity', value: String(qty), inline: true }] : []),
+            { name: 'Buyer', value: `${interaction.user}`, inline: false },
+          )
+          .setTimestamp()
+          .setFooter({ text: "Melon's Bot" });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`wtb_found:${interaction.user.id}`).setLabel('✅ Mark as Found').setStyle(ButtonStyle.Success)
+        );
+        await interaction.reply({ embeds: [embed], components: [row] });
+        return;
+      }
+
       // ── /todoptions ──
       if (interaction.commandName === 'todoptions') {
         await replyEph(interaction, { embeds: [buildOptionsEmbed(interaction.guildId)], components: buildOptionsComponents(interaction.guildId) });
@@ -1700,6 +1744,26 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.update({ content: '✅ TOD undone.', components: [] });
         autoDelete(interaction, 5);
+        return;
+      }
+
+      // ── WTS / WTB close buttons ──
+      if (id.startsWith('wts_sold:') || id.startsWith('wtb_found:')) {
+        const ownerId = id.split(':')[1];
+        if (interaction.user.id !== ownerId) {
+          await replyEph(interaction, { content: '❌ Only the person who posted this listing can close it.' });
+          return;
+        }
+        const oldEmbed = interaction.message.embeds[0];
+        const isSold = id.startsWith('wts_sold:');
+        const label  = isSold ? 'SOLD' : 'FOUND';
+        const updated = new EmbedBuilder()
+          .setColor(0x95A5A6)
+          .setTitle(`~~${oldEmbed.title.replace(/^🟢 |^🔵 /, '')}~~ — ${label}`)
+          .setFields(oldEmbed.fields.map(f => ({ name: f.name, value: f.value, inline: f.inline })))
+          .setTimestamp()
+          .setFooter({ text: "Melon's Bot" });
+        await interaction.update({ embeds: [updated], components: [] });
         return;
       }
 

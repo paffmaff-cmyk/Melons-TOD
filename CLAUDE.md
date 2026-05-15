@@ -42,6 +42,8 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 | `/stop` | Stop music and disconnect from voice |
 | `/radio` | Play a live radio station (autocomplete) |
 | `/provider` | Set music provider for the server |
+| `/wts` | Post a Want To Sell listing — `item`, `price`, `quantity` (opt) — green embed with Mark as Sold button |
+| `/wtb` | Post a Want To Buy listing — `item`, `price`, `quantity` (opt) — blue embed with Mark as Found button |
 | `/move` | Record a gear transfer — `from`, `gear`, `to` — posts `⚙️ From ➜ Gear ➜ To` |
 | `/gratz` | Congratulate a player on an epic item drop |
 | `/chars` | Create a raid roster — preset compositions or custom slot types |
