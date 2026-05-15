@@ -1404,17 +1404,18 @@ client.on('interactionCreate', async interaction => {
         // Parse time as Europe/Vilnius — accepts ":MM" (current hour) or "HH:MM" (exact)
         let timeDisplay = time;
         let nextFortTs  = null;
-        const shortMatch = time.trim().match(/^:(\d{2})$/);
-        const fullMatch  = time.trim().match(/^(\d{1,2}):(\d{2})$/);
-        if (shortMatch || fullMatch) {
+        // Accepts "MM" or "M" (minutes only, uses current Vilnius hour) or "HH:MM" (exact time)
+        const minsOnly  = time.trim().match(/^(\d{1,2})$/);
+        const fullMatch = time.trim().match(/^(\d{1,2}):(\d{2})$/);
+        if (minsOnly || fullMatch) {
           const now = new Date();
           const nowParts = new Intl.DateTimeFormat('en-US', {
             timeZone: BOT_TIMEZONE,
             year: 'numeric', month: 'numeric', day: 'numeric',
             hour: 'numeric', minute: 'numeric', hour12: false,
           }).formatToParts(now).reduce((a, p) => { if (p.type !== 'literal') a[p.type] = parseInt(p.value); return a; }, {});
-          const h = shortMatch ? (nowParts.hour === 24 ? 0 : nowParts.hour) : parseInt(fullMatch[1]);
-          const m = shortMatch ? parseInt(shortMatch[1]) : parseInt(fullMatch[2]);
+          const h = minsOnly ? (nowParts.hour === 24 ? 0 : nowParts.hour) : parseInt(fullMatch[1]);
+          const m = minsOnly ? parseInt(minsOnly[1]) : parseInt(fullMatch[2]);
           const utc    = zonedToUtc(nowParts.year, nowParts.month - 1, nowParts.day, h, m, BOT_TIMEZONE);
           const fortTs = Math.floor(utc.getTime() / 1000);
           timeDisplay  = `<t:${fortTs}:t>`;
