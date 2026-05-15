@@ -105,6 +105,18 @@ function recordDrop(guildId, bossName, killedBy, dropped) {
   saveDropHistory();
 }
 
+// ── Fort stats (per-guild, per-user) ─────────────────────────
+const FORT_STATS_FILE = path.join(__dirname, 'fort_stats.json');
+let fortStats = fs.existsSync(FORT_STATS_FILE) ? JSON.parse(fs.readFileSync(FORT_STATS_FILE, 'utf8')) : {};
+function saveFortStats() { saveFile(FORT_STATS_FILE, fortStats); }
+function recordFort(guildId, userId, username) {
+  if (!fortStats[guildId]) fortStats[guildId] = {};
+  if (!fortStats[guildId][userId]) fortStats[guildId][userId] = { count: 0, username };
+  fortStats[guildId][userId].count++;
+  fortStats[guildId][userId].username = username; // keep fresh
+  saveFortStats();
+}
+
 // ── Market listings (per-guild, per-message) ──────────────────
 const LISTINGS_FILE = path.join(__dirname, 'listings.json');
 let listings = fs.existsSync(LISTINGS_FILE) ? JSON.parse(fs.readFileSync(LISTINGS_FILE, 'utf8')) : {};
@@ -1448,53 +1460,85 @@ client.on('interactionCreate', async interaction => {
 
       // ── /fort ──
       if (interaction.commandName === 'fort') {
-        const fort   = interaction.options.getString('fort');
-        const time   = interaction.options.getString('time');
-        const action = interaction.options.getString('action');
+        const sub = interaction.options.getSubcommand();
 
-        let timeDisplay = time;
-        let nextFortTs  = null;
-        const cleanTime = time.trim().replace(/^:/, ''); // strip leading colon so ":40" works same as "40"
-        const minsOnly  = cleanTime.match(/^(\d{1,2})$/);
-        const fullMatch = cleanTime.match(/^(\d{1,2}):(\d{2})$/);
-        if (minsOnly || fullMatch) {
-          const now = new Date();
-          const nowParts = new Intl.DateTimeFormat('en-US', {
-            timeZone: BOT_TIMEZONE,
-            year: 'numeric', month: 'numeric', day: 'numeric',
-            hour: 'numeric', minute: 'numeric', hour12: false,
-          }).formatToParts(now).reduce((a, p) => { if (p.type !== 'literal') a[p.type] = parseInt(p.value); return a; }, {});
-          const h = minsOnly ? (nowParts.hour === 24 ? 0 : nowParts.hour) : parseInt(fullMatch[1]);
-          const m = minsOnly ? parseInt(minsOnly[1]) : parseInt(fullMatch[2]);
-          const utc    = zonedToUtc(nowParts.year, nowParts.month - 1, nowParts.day, h, m, BOT_TIMEZONE);
-          const fortTs = Math.floor(utc.getTime() / 1000);
-          timeDisplay  = `<t:${fortTs}:t>`;
-          nextFortTs   = fortTs + 5 * 60 * 60;
-        }
+        // ── /fort log ──
+        if (sub === 'log') {
+          const fort   = interaction.options.getString('fort');
+          const time   = interaction.options.getString('time');
+          const action = interaction.options.getString('action');
 
-        const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
-        const msg = await interaction.reply({ embeds: [buildFortEmbed(fortData)], fetchReply: true });
-        if (nextFortTs) {
-          fortMessages.set(msg.id, { ...fortData, channelId: interaction.channelId });
-        }
-
-        // Ephemeral undo button (60s window)
-        pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: interaction.channelId });
-        setTimeout(() => pendingFortUndos.delete(interaction.user.id), 60 * 1000);
-        const fortUndoMsg = await interaction.followUp({
-          content: '↩️ Registered! You have 60s to undo:',
-          components: [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('fort_undo').setLabel('↩ Undo Fort').setStyle(ButtonStyle.Danger)
-          )],
-          flags: MessageFlags.Ephemeral,
-          fetchReply: true,
-        });
-        setTimeout(async () => {
-          try { await interaction.deleteReply(fortUndoMsg.id); } catch (_) {
-            try { await fortUndoMsg.edit({ content: '​', components: [] }); } catch (__) {}
+          let timeDisplay = time;
+          let nextFortTs  = null;
+          // Normalise: strip leading colon, expand 4-digit HHMM → HH:MM
+          let cleanTime = time.trim().replace(/^:/, '');
+          if (/^\d{4}$/.test(cleanTime)) cleanTime = `${cleanTime.slice(0,2)}:${cleanTime.slice(2)}`;
+          const minsOnly  = cleanTime.match(/^(\d{1,2})$/);
+          const fullMatch = cleanTime.match(/^(\d{1,2}):(\d{2})$/);
+          if (minsOnly || fullMatch) {
+            const now = new Date();
+            const nowParts = new Intl.DateTimeFormat('en-US', {
+              timeZone: BOT_TIMEZONE,
+              year: 'numeric', month: 'numeric', day: 'numeric',
+              hour: 'numeric', minute: 'numeric', hour12: false,
+            }).formatToParts(now).reduce((a, p) => { if (p.type !== 'literal') a[p.type] = parseInt(p.value); return a; }, {});
+            const h = minsOnly ? (nowParts.hour === 24 ? 0 : nowParts.hour) : parseInt(fullMatch[1]);
+            const m = minsOnly ? parseInt(minsOnly[1]) : parseInt(fullMatch[2]);
+            const utc    = zonedToUtc(nowParts.year, nowParts.month - 1, nowParts.day, h, m, BOT_TIMEZONE);
+            const fortTs = Math.floor(utc.getTime() / 1000);
+            timeDisplay  = `<t:${fortTs}:t>`;
+            nextFortTs   = fortTs + 5 * 60 * 60;
           }
-        }, 60 * 1000);
-        return;
+
+          const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
+          const msg = await interaction.reply({ embeds: [buildFortEmbed(fortData)], fetchReply: true });
+          if (nextFortTs) {
+            fortMessages.set(msg.id, { ...fortData, channelId: interaction.channelId });
+          }
+
+          recordFort(interaction.guildId, interaction.user.id, interaction.user.username);
+
+          // Ephemeral undo button (60s window)
+          pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: interaction.channelId });
+          setTimeout(() => pendingFortUndos.delete(interaction.user.id), 60 * 1000);
+          const fortUndoMsg = await interaction.followUp({
+            content: '↩️ Registered! You have 60s to undo:',
+            components: [new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId('fort_undo').setLabel('↩ Undo Fort').setStyle(ButtonStyle.Danger)
+            )],
+            flags: MessageFlags.Ephemeral,
+            fetchReply: true,
+          });
+          setTimeout(async () => {
+            try { await interaction.deleteReply(fortUndoMsg.id); } catch (_) {
+              try { await fortUndoMsg.edit({ content: '​', components: [] }); } catch (__) {}
+            }
+          }, 60 * 1000);
+          return;
+        }
+
+        // ── /fort stats ──
+        if (sub === 'stats') {
+          const guildData = fortStats[interaction.guildId] ?? {};
+          const sorted = Object.entries(guildData).sort((a, b) => b[1].count - a[1].count);
+          if (sorted.length === 0) {
+            await interaction.reply({ content: 'No fort runs recorded yet.', flags: MessageFlags.Ephemeral });
+            return;
+          }
+          const lines = sorted.map(([uid, d]) => `<@${uid}> — **${d.count}**`);
+          const [kingId] = sorted[0];
+          await interaction.reply({
+            embeds: [new EmbedBuilder()
+              .setColor(0xE67E22)
+              .setTitle('🏰 Fort Stats')
+              .setDescription(lines.join('\n'))
+              .addFields({ name: '👑 FORT KING', value: `<@${kingId}>` })
+              .setFooter({ text: "Melon's Bot" })
+            ],
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
       }
 
       // ── /wts ──
