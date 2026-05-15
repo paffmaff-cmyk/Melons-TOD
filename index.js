@@ -1401,16 +1401,21 @@ client.on('interactionCreate', async interaction => {
         const action = interaction.options.getString('action');
         const icon   = action === 'Farm' ? '🌾' : '⭐';
 
-        // Parse HH:MM as Europe/Vilnius and convert to a Discord timestamp
+        // Parse time as Europe/Vilnius — accepts ":MM" (current hour) or "HH:MM" (exact)
         let timeDisplay = time;
         let nextFortTs  = null;
-        const tm = time.match(/^(\d{1,2}):(\d{2})$/);
-        if (tm) {
+        const shortMatch = time.trim().match(/^:(\d{2})$/);
+        const fullMatch  = time.trim().match(/^(\d{1,2}):(\d{2})$/);
+        if (shortMatch || fullMatch) {
           const now = new Date();
-          const parts = new Intl.DateTimeFormat('en-US', {
-            timeZone: BOT_TIMEZONE, year: 'numeric', month: 'numeric', day: 'numeric',
+          const nowParts = new Intl.DateTimeFormat('en-US', {
+            timeZone: BOT_TIMEZONE,
+            year: 'numeric', month: 'numeric', day: 'numeric',
+            hour: 'numeric', minute: 'numeric', hour12: false,
           }).formatToParts(now).reduce((a, p) => { if (p.type !== 'literal') a[p.type] = parseInt(p.value); return a; }, {});
-          const utc = zonedToUtc(parts.year, parts.month - 1, parts.day, parseInt(tm[1]), parseInt(tm[2]), BOT_TIMEZONE);
+          const h = shortMatch ? (nowParts.hour === 24 ? 0 : nowParts.hour) : parseInt(fullMatch[1]);
+          const m = shortMatch ? parseInt(shortMatch[1]) : parseInt(fullMatch[2]);
+          const utc    = zonedToUtc(nowParts.year, nowParts.month - 1, nowParts.day, h, m, BOT_TIMEZONE);
           const fortTs = Math.floor(utc.getTime() / 1000);
           timeDisplay  = `<t:${fortTs}:t>`;
           nextFortTs   = fortTs + 5 * 60 * 60;
