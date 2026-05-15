@@ -1251,27 +1251,23 @@ client.once('clientReady', async () => {
     }
   }, 60 * 1000);
 
-  // Every 30s: update H:MM:SS countdown on fort cooldown messages
+  // Every 10s: update H:MM:SS countdown on fort cooldown messages
   setInterval(async () => {
     const now = Date.now();
     for (const [msgId, data] of fortMessages) {
-      if (data.nextFortTs * 1000 <= now) {
-        // Cooldown expired — do a final edit to show "Available now" then remove
-        try {
-          const ch  = await client.channels.fetch(data.channelId);
-          const msg = await ch.messages.fetch(msgId);
-          await msg.edit({ embeds: [buildFortEmbed(data)] });
-        } catch (_) {}
-        fortMessages.delete(msgId);
-        continue;
-      }
+      const expired = data.nextFortTs * 1000 <= now;
       try {
         const ch  = await client.channels.fetch(data.channelId);
         const msg = await ch.messages.fetch(msgId);
         await msg.edit({ embeds: [buildFortEmbed(data)] });
-      } catch (_) { fortMessages.delete(msgId); }
+      } catch (err) {
+        // Only stop tracking if the message/channel is truly gone (not transient errors)
+        if (err.code === 10008 || err.code === 10003) fortMessages.delete(msgId);
+        continue;
+      }
+      if (expired) fortMessages.delete(msgId);
     }
-  }, 30 * 1000);
+  }, 10 * 1000);
 });
 
 client.on('guildCreate', async guild => {
@@ -1479,11 +1475,11 @@ client.on('interactionCreate', async interaction => {
         const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
         const msg = await interaction.reply({ embeds: [buildFortEmbed(fortData)], fetchReply: true });
         if (nextFortTs) {
-          fortMessages.set(msg.id, { ...fortData, channelId: msg.channelId });
+          fortMessages.set(msg.id, { ...fortData, channelId: interaction.channelId });
         }
 
         // Ephemeral undo button (60s window)
-        pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: msg.channelId });
+        pendingFortUndos.set(interaction.user.id, { messageId: msg.id, channelId: interaction.channelId });
         setTimeout(() => pendingFortUndos.delete(interaction.user.id), 60 * 1000);
         const fortUndoMsg = await interaction.followUp({
           content: '↩️ Registered! You have 60s to undo:',
