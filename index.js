@@ -1012,7 +1012,7 @@ function buildListingMsg(listing) {
     const icon  = isWts ? '🟣' : '🟡';
     const label = isWts ? 'WTS' : 'WTB';
     const expTs = Math.floor(listing.expiresAt / 1000);
-    const lines = [`${icon} **${label}**`, `**${listing.item}**`];
+    const lines = [`${icon} **${label}**`, ``, `**${listing.item}**`, ``];
     if (listing.price) lines.push(`${isWts ? 'Price' : 'Offering'}: ${listing.price}`);
     lines.push(`Expires: <t:${expTs}:R>`);
     lines.push(`${isWts ? 'Seller' : 'Buyer'}: <@${listing.userId}>`);
