@@ -1400,14 +1400,27 @@ client.on('interactionCreate', async interaction => {
         const time   = interaction.options.getString('time');
         const action = interaction.options.getString('action');
         const icon   = action === 'Farm' ? '🌾' : '⭐';
+
+        // Parse HH:MM as Europe/Vilnius and convert to a Discord timestamp
+        let timeDisplay = time;
+        const tm = time.match(/^(\d{1,2}):(\d{2})$/);
+        if (tm) {
+          const now = new Date();
+          const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: BOT_TIMEZONE, year: 'numeric', month: 'numeric', day: 'numeric',
+          }).formatToParts(now).reduce((a, p) => { if (p.type !== 'literal') a[p.type] = parseInt(p.value); return a; }, {});
+          const utc = zonedToUtc(parts.year, parts.month - 1, parts.day, parseInt(tm[1]), parseInt(tm[2]), BOT_TIMEZONE);
+          timeDisplay = `<t:${Math.floor(utc.getTime() / 1000)}:t>`;
+        }
+
         await interaction.reply({
           embeds: [new EmbedBuilder()
             .setColor(action === 'Farm' ? 0xE67E22 : 0x9B59B6)
             .setTitle(`🏰 ${fort}`)
             .addFields(
-              { name: '⏰ Time',    value: time,           inline: true },
-              { name: `${icon} Action`, value: action,    inline: true },
-              { name: '👤 By',     value: `${interaction.user}`, inline: true },
+              { name: '⏰ Time',        value: timeDisplay,         inline: true },
+              { name: `${icon} Action`, value: action,              inline: true },
+              { name: '👤 By',          value: `${interaction.user}`, inline: true },
             )
             .setTimestamp()
             .setFooter({ text: "Melon's Bot" })
