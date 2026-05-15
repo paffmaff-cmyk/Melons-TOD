@@ -211,7 +211,6 @@ const pendingRetry = new Map();
 const pendingTodUndos  = new Map();
 const pendingFortUndos = new Map(); // userId → { messageId, channelId }
 const pendingShops     = new Map(); // userId → { interaction, timer }
-const fortMessages    = new Map(); // msgId → { fort, action, timeDisplay, nextFortTs, userId, channelId, postedAt }
 // key: userId, value: { messageId, channelId, guildId, bossName, alertKey }
 
 function buildAnnounceSetupEmbed(state) {
@@ -1114,19 +1113,8 @@ function buildFortEmbed(data) {
     { name: '👤 By',          value: `<@${data.userId}>` },
   ];
   if (data.nextFortTs) {
-    const remaining = data.nextFortTs * 1000 - Date.now();
-    let cooldownStr;
-    if (remaining <= 0) {
-      cooldownStr = 'Available now';
-    } else {
-      const totalSecs = Math.ceil(remaining / 1000);
-      const h = Math.floor(totalSecs / 3600);
-      const m = Math.floor((totalSecs % 3600) / 60);
-      const s = totalSecs % 60;
-      cooldownStr = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    }
     fields.push(
-      { name: '⏳ Cooldown ends', value: cooldownStr },
+      { name: '⏳ Cooldown ends', value: `<t:${data.nextFortTs}:R>` },
       { name: '🔜 Next fort available', value: `<t:${data.nextFortTs}:t>` },
     );
   }
@@ -1263,23 +1251,6 @@ client.once('clientReady', async () => {
     }
   }, 60 * 1000);
 
-  // Every 5s: update H:MM:SS countdown on fort cooldown messages
-  setInterval(async () => {
-    const now = Date.now();
-    for (const [msgId, data] of fortMessages) {
-      const expired = data.nextFortTs * 1000 <= now;
-      try {
-        const ch  = await client.channels.fetch(data.channelId);
-        const msg = await ch.messages.fetch(msgId);
-        await msg.edit({ embeds: [buildFortEmbed(data)] });
-      } catch (err) {
-        // Only stop tracking if the message/channel is truly gone (not transient errors)
-        if (err.code === 10008 || err.code === 10003) fortMessages.delete(msgId);
-        continue;
-      }
-      if (expired) fortMessages.delete(msgId);
-    }
-  }, 5 * 1000);
 });
 
 client.on('guildCreate', async guild => {
@@ -1487,14 +1458,11 @@ client.on('interactionCreate', async interaction => {
             const utc    = zonedToUtc(nowParts.year, nowParts.month - 1, nowParts.day, h, m, BOT_TIMEZONE);
             const fortTs = Math.floor(utc.getTime() / 1000);
             timeDisplay  = `<t:${fortTs}:t>`;
-            nextFortTs   = Math.floor(Date.now() / 1000) + 5 * 60 * 60;
+            nextFortTs   = fortTs + 5 * 60 * 60;
           }
 
           const fortData = { fort, action, timeDisplay, nextFortTs, userId: interaction.user.id, postedAt: Date.now() };
           const msg = await interaction.reply({ embeds: [buildFortEmbed(fortData)], fetchReply: true });
-          if (nextFortTs) {
-            fortMessages.set(msg.id, { ...fortData, channelId: interaction.channelId });
-          }
 
           recordFort(interaction.guildId, interaction.user.id, interaction.user.username);
 
@@ -2106,7 +2074,6 @@ client.on('interactionCreate', async interaction => {
           await interaction.update({ content: '⏱️ Undo window has expired.', components: [] });
           return;
         }
-        fortMessages.delete(undo.messageId);
         try { const ch = await client.channels.fetch(undo.channelId); const msg = await ch.messages.fetch(undo.messageId); await msg.delete(); } catch (_) {}
         await interaction.update({ content: '✅ Fort registration undone.', components: [] });
         autoDelete(interaction, 5);
