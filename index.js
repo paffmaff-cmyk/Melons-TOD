@@ -1,6 +1,14 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+
+// ── Async write queue — one file write at a time, no overlaps ──
+let _writeQueue = Promise.resolve();
+function saveFile(filePath, data) {
+  _writeQueue = _writeQueue.then(() =>
+    fs.promises.writeFile(filePath, JSON.stringify(data, null, 2))
+  ).catch(err => console.error(`[saveFile] Failed to write ${filePath}:`, err));
+}
 const music = require('./music');
 const {
   Client, GatewayIntentBits, EmbedBuilder, ActivityType,
@@ -40,9 +48,7 @@ function getGuildBosses(guildId) {
   return bossesByGuild[guildId];
 }
 
-function saveBosses() {
-  fs.writeFileSync(BOSSES_FILE, JSON.stringify(bossesByGuild, null, 2));
-}
+function saveBosses() { saveFile(BOSSES_FILE, bossesByGuild); }
 
 function findBoss(guildId, name) {
   return getGuildBosses(guildId).find(b => b.name.toLowerCase() === name.toLowerCase());
@@ -60,9 +66,7 @@ function getAbsences(guildId) {
   return absencesDB[guildId];
 }
 
-function saveAbsences() {
-  fs.writeFileSync(ABSENCES_FILE, JSON.stringify(absencesDB, null, 2));
-}
+function saveAbsences() { saveFile(ABSENCES_FILE, absencesDB); }
 
 function purgePastAbsences() {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -82,14 +86,14 @@ setInterval(purgePastAbsences, 24 * 60 * 60 * 1000);
 // ── Boss alert data ───────────────────────────────────────────
 const BOSS_ALERTS_FILE = path.join(__dirname, 'boss_alerts.json');
 let bossAlerts = fs.existsSync(BOSS_ALERTS_FILE) ? JSON.parse(fs.readFileSync(BOSS_ALERTS_FILE, 'utf8')) : {};
-function saveBossAlerts() { fs.writeFileSync(BOSS_ALERTS_FILE, JSON.stringify(bossAlerts, null, 2)); }
+function saveBossAlerts() { saveFile(BOSS_ALERTS_FILE, bossAlerts); }
 const alertTimers      = new Map();
 const closeAlertTimers = new Map();
 
 // ── Drop history (per-guild, per-boss kill/drop stats) ────────
 const DROP_HISTORY_FILE = path.join(__dirname, 'drop_history.json');
 let dropHistory = fs.existsSync(DROP_HISTORY_FILE) ? JSON.parse(fs.readFileSync(DROP_HISTORY_FILE, 'utf8')) : {};
-function saveDropHistory() { fs.writeFileSync(DROP_HISTORY_FILE, JSON.stringify(dropHistory, null, 2)); }
+function saveDropHistory() { saveFile(DROP_HISTORY_FILE, dropHistory); }
 function recordDrop(guildId, bossName, killedBy, dropped) {
   if (!dropHistory[guildId]) dropHistory[guildId] = {};
   if (!dropHistory[guildId][bossName]) dropHistory[guildId][bossName] = { allyKills: 0, enemyKills: 0, unknownKills: 0, drops: 0, noDrops: 0 };
@@ -104,13 +108,13 @@ function recordDrop(guildId, bossName, killedBy, dropped) {
 // ── Market listings (per-guild, per-message) ──────────────────
 const LISTINGS_FILE = path.join(__dirname, 'listings.json');
 let listings = fs.existsSync(LISTINGS_FILE) ? JSON.parse(fs.readFileSync(LISTINGS_FILE, 'utf8')) : {};
-function saveListings() { fs.writeFileSync(LISTINGS_FILE, JSON.stringify(listings, null, 2)); }
+function saveListings() { saveFile(LISTINGS_FILE, listings); }
 const listingTimers = new Map(); // key: "guildId:messageId" → { expiry, delete }
 
 // ── TOD state (live window tracking, separate from alerts) ────
 const TOD_STATE_FILE = path.join(__dirname, 'tod_state.json');
 let todState = fs.existsSync(TOD_STATE_FILE) ? JSON.parse(fs.readFileSync(TOD_STATE_FILE, 'utf8')) : {};
-function saveTodState() { fs.writeFileSync(TOD_STATE_FILE, JSON.stringify(todState, null, 2)); }
+function saveTodState() { saveFile(TOD_STATE_FILE, todState); }
 function setTodState(guildId, bossName, data) {
   if (!todState[guildId]) todState[guildId] = {};
   todState[guildId][bossName] = data;
@@ -303,9 +307,7 @@ let announcements = fs.existsSync(ANNOUNCEMENTS_FILE)
   ? JSON.parse(fs.readFileSync(ANNOUNCEMENTS_FILE, 'utf8'))
   : {};
 
-function saveAnnouncements() {
-  fs.writeFileSync(ANNOUNCEMENTS_FILE, JSON.stringify(announcements, null, 2));
-}
+function saveAnnouncements() { saveFile(ANNOUNCEMENTS_FILE, announcements); }
 
 // Times entered by users are always treated as Europe/Vilnius (Lithuania) time.
 const BOT_TIMEZONE = 'Europe/Vilnius';
@@ -485,9 +487,7 @@ let charsPersisted = fs.existsSync(CHARS_PERSIST_FILE)
   ? (() => { try { return JSON.parse(fs.readFileSync(CHARS_PERSIST_FILE, 'utf8')); } catch { return {}; } })()
   : {};
 
-function saveCharsPersisted() {
-  fs.writeFileSync(CHARS_PERSIST_FILE, JSON.stringify(charsPersisted, null, 2));
-}
+function saveCharsPersisted() { saveFile(CHARS_PERSIST_FILE, charsPersisted); }
 
 const MAGES_SLOTS  = ['BP1', 'BP2', 'SE', 'BD', 'SWS', 'OL', 'DD1', 'DD2', 'DD3', 'PONY', 'SPOIL', 'PRANA', 'JUDI'];
 const ZAKEN_SLOTS       = ['DA-1', 'DA-3', 'DA-4', 'DA-6', 'SLH-8', 'BD-7', 'SWS-5', 'SE-9', 'BP-2', 'WC', 'CAT', 'JUDI', 'PHANTOM', 'WS', 'OL'];
