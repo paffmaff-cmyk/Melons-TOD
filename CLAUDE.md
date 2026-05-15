@@ -42,6 +42,7 @@ Run after every code change. Also run `node deploy-commands.js` after adding/cha
 | `/stop` | Stop music and disconnect from voice |
 | `/radio` | Play a live radio station (autocomplete) |
 | `/provider` | Set music provider for the server |
+| `/move` | Record a gear transfer — `from`, `gear`, `to` — posts `⚙️ From ➜ Gear ➜ To` |
 | `/gratz` | Congratulate a player on an epic item drop |
 | `/chars` | Create a raid roster — preset compositions or custom slot types |
 

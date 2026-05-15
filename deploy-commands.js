@@ -81,6 +81,14 @@ const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('move')
+    .setDescription('Record a gear transfer between players')
+    .addStringOption(o => o.setName('from').setDescription('Who is giving the gear').setRequired(true))
+    .addStringOption(o => o.setName('gear').setDescription('What gear is being moved').setRequired(true))
+    .addStringOption(o => o.setName('to').setDescription('Who is receiving the gear').setRequired(true))
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('gratz')
     .setDescription('Congratulate a player on an epic drop')
     .addRoleOption(o => o.setName('player').setDescription('Select the role/player to congratulate').setRequired(true))

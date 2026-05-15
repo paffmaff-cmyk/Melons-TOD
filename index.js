@@ -1262,6 +1262,15 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
+      // ── /move ──
+      if (interaction.commandName === 'move') {
+        const from = interaction.options.getString('from');
+        const gear = interaction.options.getString('gear');
+        const to   = interaction.options.getString('to');
+        await interaction.reply(`⚙️ **${from}** ➜ **${gear}** ➜ **${to}**`);
+        return;
+      }
+
       // ── /todoptions ──
       if (interaction.commandName === 'todoptions') {
         await replyEph(interaction, { embeds: [buildOptionsEmbed(interaction.guildId)], components: buildOptionsComponents(interaction.guildId) });
