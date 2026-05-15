@@ -1006,32 +1006,25 @@ function scheduleCloseAlert(alertKey, bossName, channelId, windowEndMs) {
 }
 
 // ── Market listing helpers ────────────────────────────────────
-function buildListingEmbed(listing) {
+function buildListingMsg(listing) {
   const isWts = listing.type === 'wts';
-  let color, title;
   if (listing.status === 'active') {
-    color = isWts ? 0x9B59B6 : 0xF0B232;
-    title = isWts ? 'WTS' : 'WTB';
-  } else {
-    const suffix = listing.status === 'sold' ? 'SOLD' : listing.status === 'found' ? 'FOUND' : 'EXPIRED';
-    color = 0xED4245;
-    title = `${isWts ? 'WTS' : 'WTB'} — ${suffix}`;
-  }
-  const embed = new EmbedBuilder()
-    .setColor(color)
-    .setTitle(title)
-    .setDescription(`**${listing.item}**`)
-    .setTimestamp(listing.postedAt)
-    .setFooter({ text: "Melon's Bot" });
-  const fields = [];
-  if (listing.price) fields.push({ name: isWts ? 'Price' : 'Offering', value: listing.price, inline: true });
-  if (listing.status === 'active') {
+    const icon  = isWts ? '🟣' : '🟡';
+    const label = isWts ? 'WTS' : 'WTB';
     const expTs = Math.floor(listing.expiresAt / 1000);
-    fields.push({ name: 'Expires', value: `<t:${expTs}:R> (<t:${expTs}:t>)`, inline: true });
+    const lines = [`${icon} **${label}**`, `**${listing.item}**`];
+    if (listing.price) lines.push(`${isWts ? 'Price' : 'Offering'}: ${listing.price}`);
+    lines.push(`Expires: <t:${expTs}:R>`);
+    lines.push(`${isWts ? 'Seller' : 'Buyer'}: <@${listing.userId}>`);
+    return { content: lines.join('\n'), embeds: [] };
   }
-  fields.push({ name: isWts ? 'Seller' : 'Buyer', value: `<@${listing.userId}>`, inline: false });
-  embed.addFields(fields);
-  return embed;
+  const suffix = listing.status === 'sold' ? 'SOLD' : listing.status === 'found' ? 'FOUND' : 'EXPIRED';
+  const lines = [
+    `🔴 **${isWts ? 'WTS' : 'WTB'} — ${suffix}**`,
+    `~~${listing.item}~~`,
+    `${isWts ? 'Seller' : 'Buyer'}: <@${listing.userId}>`,
+  ];
+  return { content: lines.join('\n'), embeds: [] };
 }
 
 function buildListingComponents(listing, messageId) {
@@ -1051,7 +1044,7 @@ async function markListingExpired(guildId, messageId) {
   try {
     const ch = await client.channels.fetch(listing.channelId);
     const msg = await ch.messages.fetch(messageId);
-    await msg.edit({ embeds: [buildListingEmbed(listing)], components: [] });
+    await msg.edit({ ...buildListingMsg(listing), components: [] });
   } catch (_) {}
 }
 
@@ -1294,13 +1287,19 @@ client.on('interactionCreate', async interaction => {
         const todMsg = await interaction.fetchReply();
         pendingTodUndos.set(interaction.user.id, { messageId: todMsg.id, channelId: interaction.channelId, guildId: interaction.guildId, bossName: boss.name, alertKey, todTime, windowStart, windowEnd });
         setTimeout(() => pendingTodUndos.delete(interaction.user.id), 60 * 1000);
-        await interaction.followUp({
+        const undoMsg = await interaction.followUp({
           content: '↩️ Recorded! You have 60s to undo:',
           components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('tod_undo').setLabel('↩ Undo TOD').setStyle(ButtonStyle.Danger)
           )],
           flags: MessageFlags.Ephemeral,
+          fetchReply: true,
         });
+        setTimeout(async () => {
+          try { await interaction.deleteReply(undoMsg.id); } catch (_) {
+            try { await undoMsg.edit({ content: '​', components: [] }); } catch (__) {}
+          }
+        }, 60 * 1000);
         return;
       }
 
@@ -1384,7 +1383,7 @@ client.on('interactionCreate', async interaction => {
         // Defer ephemerally so Discord's 3s window is satisfied, then delete ack — the actual
         // listing is sent as a regular channel message so Discord's dismiss X never appears.
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const msg = await interaction.channel.send({ embeds: [buildListingEmbed(listing)], components: [] });
+        const msg = await interaction.channel.send({ ...buildListingMsg(listing), components: [] });
         listing.messageId = msg.id;
         if (!listings[interaction.guildId]) listings[interaction.guildId] = {};
         listings[interaction.guildId][msg.id] = listing;
@@ -1406,32 +1405,21 @@ client.on('interactionCreate', async interaction => {
         const wts = active.filter(l => l.type === 'wts');
         const wtb = active.filter(l => l.type === 'wtb');
         const lines = [];
+        const listingLine = (l) => {
+          const price = l.price ? ` — ${l.price}` : '';
+          const url   = `https://discord.com/channels/${interaction.guildId}/${l.channelId}/${l.messageId}`;
+          return `• **${l.item}**${price} | <@${l.userId}> | expires <t:${Math.floor(l.expiresAt / 1000)}:R> — [→ go to listing](${url})`;
+        };
         if (wts.length) {
           lines.push(`**WTS (${wts.length})**`);
-          for (const l of wts) {
-            const price = l.price ? ` — ${l.price}` : '';
-            lines.push(`• **${l.item}**${price} | <@${l.userId}> | expires <t:${Math.floor(l.expiresAt / 1000)}:R>`);
-          }
+          for (const l of wts) lines.push(listingLine(l));
         }
         if (wtb.length) {
           if (wts.length) lines.push('');
           lines.push(`**WTB (${wtb.length})**`);
-          for (const l of wtb) {
-            const price = l.price ? ` — offering ${l.price}` : '';
-            lines.push(`• **${l.item}**${price} | <@${l.userId}> | expires <t:${Math.floor(l.expiresAt / 1000)}:R>`);
-          }
+          for (const l of wtb) lines.push(listingLine(l));
         }
-        // Build link buttons (up to 25) — one per listing, jumps to the message in chat
-        const allActive = [...wts, ...wtb];
-        const btnRows = [];
-        for (let i = 0; i < Math.min(allActive.length, 25); i++) {
-          if (i % 5 === 0) btnRows.push(new ActionRowBuilder());
-          const l = allActive[i];
-          const url = `https://discord.com/channels/${interaction.guildId}/${l.channelId}/${l.messageId}`;
-          const label = `${l.type === 'wts' ? '🟣' : '🟡'} ${l.item}`.slice(0, 80);
-          btnRows[btnRows.length - 1].addComponents(new ButtonBuilder().setLabel(label).setStyle(ButtonStyle.Link).setURL(url));
-        }
-        await replyEph(interaction, { content: lines.join('\n'), components: btnRows });
+        await replyEph(interaction, { content: lines.join('\n') });
         return;
       }
 
@@ -1602,16 +1590,19 @@ client.on('interactionCreate', async interaction => {
 
           for (const msg of messages.values()) {
             for (const embed of msg.embeds) {
-              const footer = embed.footer?.text ?? '';
-              if (!footer.includes("Melon's Bot") && !footer.includes("Red Alert Bot")) continue;
               if (!embed.title) continue;
-              const rawName = embed.title.split(' — ')[0].trim();
+              const footer = embed.footer?.text ?? '';
+              const isRedAlert = embed.title.includes(' Killed by ');
+              if (!footer.includes("Melon's Bot") && !isRedAlert) continue;
+              const rawName = isRedAlert
+                ? embed.title.split(' Killed by ')[0].trim()
+                : embed.title.split(' — ')[0].trim();
               const bossName = bossNames.get(rawName.toLowerCase());
               if (!bossName) continue;
               const dropField = embed.fields?.find(f => f.name === 'Drop');
               if (!dropField) continue;
               const killedBy = embed.title.includes('Ally') ? 'ally' : embed.title.includes('Enemy') ? 'enemy' : null;
-              const dropped  = dropField.value.includes('Dropped ✅');
+              const dropped  = dropField.value.includes('✅');
               if (!newHistory[bossName]) newHistory[bossName] = { allyKills: 0, enemyKills: 0, unknownKills: 0, drops: 0, noDrops: 0 };
               const s = newHistory[bossName];
               if (killedBy === 'ally') s.allyKills++;
@@ -1898,7 +1889,7 @@ client.on('interactionCreate', async interaction => {
         const t  = listingTimers.get(tk);
         if (t?.expiry) { clearTimeout(t.expiry); t.expiry = null; }
         await interaction.update({
-          embeds: [buildListingEmbed(listing)],
+          ...buildListingMsg(listing),
           components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`listing_remove:${ownerId}:${messageId}`).setLabel('🗑️ Remove').setStyle(ButtonStyle.Danger)
           )],
